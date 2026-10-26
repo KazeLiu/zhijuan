@@ -1,0 +1,42 @@
+{
+  "name": "zhijuan",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.12.1",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "dev": "nuxt dev --port 4310",
+    "build": "nuxt build",
+    "preview": "nuxt preview",
+    "start": "node .output/server/index.mjs",
+    "postinstall": "nuxt prepare",
+    "typecheck": "nuxt typecheck"
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "2.3.2",
+    "@element-plus/nuxt": "1.1.5",
+    "dayjs": "1.11.23",
+    "element-plus": "2.14.7",
+    "exceljs": "4.4.0",
+    "mammoth": "1.13.0",
+    "nuxt": "4.5.1",
+    "unpdf": "1.9.1",
+    "vue": "3.5.44",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "typescript": "5.9.3",
+    "vue-tsc": "3.3.13"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@parcel/watcher",
+      "esbuild",
+      "unrs-resolver"
+    ]
+  }
+}

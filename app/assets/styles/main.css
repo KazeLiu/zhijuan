@@ -1,0 +1,57 @@
+/* 知卷全局样式与设计变量（设计文档 §12） */
+:root {
+  --zj-primary: #15803d;
+  --zj-primary-weak: #e7f6ec;
+  --zj-bg: #f7f9f7;
+  --zj-text: #17211b;
+  --zj-text-muted: #52605a;
+  --zj-border: #dfe6e1;
+  --zj-danger: #c0392b;
+  --zj-radius: 10px;
+  --zj-font: 'Microsoft YaHei', 'PingFang SC', 'Noto Sans SC', 'Source Han Sans SC', 'Segoe UI', system-ui, sans-serif;
+  --zj-mono: 'Cascadia Mono', 'Consolas', 'Menlo', ui-monospace, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#__nuxt {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+}
+
+body {
+  font-family: var(--zj-font);
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--zj-text);
+  background: var(--zj-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--zj-primary);
+}
+
+/* 计时器等需要等宽数字，避免秒数跳动导致布局抖动 */
+.zj-tabular {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--zj-mono);
+}
+
+.zj-muted {
+  color: var(--zj-text-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

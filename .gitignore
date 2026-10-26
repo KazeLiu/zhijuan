@@ -1,0 +1,31 @@
+# 依赖
+node_modules/
+
+# 构建产物
+.nuxt/
+.output/
+.nitro/
+.cache/
+dist/
+
+# 私有数据：SQLite 主库与 WAL 辅助文件、上传的资料原件（设计 §2.2 / §13.1）
+data/
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# 私密配置（模板 .env.example 需要提交）
+.env
+.env.*
+!.env.example
+
+# 日志
+*.log
+logs/
+
+# 编辑器与系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
