@@ -199,4 +199,6 @@ export interface DocumentPreviewDTO {
   /** 本次返回的正文片段 */
   text: string
   truncated: boolean
+  /** 资料库预览额外提供本页覆盖的定位段片段，便于人工填写引用。 */
+  segments?: Array<{ locator: string; text: string }>
 }

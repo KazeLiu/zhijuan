@@ -44,7 +44,7 @@ import {
 } from '../db/queries/exams'
 import { findActiveJob, findLatestJob, toJobDTO } from '../db/queries/jobs'
 import { listDocuments, toDocumentDTO } from '../db/queries/documents'
-import { listQuestions, toQuestionAdminDTO } from '../db/queries/questions'
+import { listQuestions, toQuestionAdminDTOs } from '../db/queries/questions'
 import { findAttemptByName, type AttemptRecord } from '../db/queries/attempts'
 import { ApiFailure, throwApi } from '../utils/respond'
 import { withTransaction } from '../utils/db'
@@ -209,7 +209,7 @@ export function getExamAdminDTO(db: DatabaseSync, examId: string, now: number): 
     questionCount: countQuestionsOfExam(db, examId),
     attemptCount: countAttemptsOfExam(db, examId),
     documents: listDocuments(db, examId).map(toDocumentDTO),
-    questions: listQuestions(db, examId).map(toQuestionAdminDTO),
+    questions: toQuestionAdminDTOs(db, listQuestions(db, examId)),
     activeJob: activeJob ? toJobDTO(activeJob) : null,
     latestJob: latestJob ? toJobDTO(latestJob) : null,
     publishChecklist: buildPublishChecklist(db, exam, now),

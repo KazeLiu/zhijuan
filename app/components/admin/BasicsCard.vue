@@ -16,7 +16,7 @@ interface Props {
   locked?: boolean
 }
 const props = withDefaults(defineProps<Props>(), { locked: false })
-const emit = defineEmits<{ changed: [] }>()
+const emit = defineEmits<{ changed: []; 'dirty-change': [dirty: boolean] }>()
 
 interface ConflictItem {
   id?: string
@@ -74,6 +74,7 @@ const previewWindow = computed(() => {
   if (!Number.isFinite(start) || !Number.isFinite(end)) return ''
   return `${formatDateTime(start, zone)} ~ ${formatDateTime(end, zone)}（${zone}）`
 })
+watch(() => dirty.value || saving.value, (value) => emit('dirty-change', value), { immediate: true })
 
 const localErrors = computed<Record<string, string>>(() => {
   const errors: Record<string, string> = {}

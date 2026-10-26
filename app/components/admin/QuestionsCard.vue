@@ -5,7 +5,6 @@
  */
 import type {
   AnswerDefinition,
-  BlankDefinition,
   ExamAdminDTO,
   QuestionAdminDTO,
   QuestionDraftInput,
@@ -15,23 +14,21 @@ import type {
   DocumentDTO,
 } from '#shared/types'
 import {
-  CHOICE_OPTION_IDS,
-  MAX_EXPLANATION_CHARS,
   MAX_OPTION_TEXT_CHARS,
   MAX_QUESTIONS,
   MAX_QUOTE_CHARS,
   MAX_STEM_CHARS,
   MIN_QUOTE_CHARS,
-  TRUE_FALSE_OPTIONS,
 } from '#shared/constants'
 import { QUESTION_TYPE_LABELS } from '#shared/types'
 
 interface Props {
   exam: ExamAdminDTO
   locked?: boolean
+  externalBusy?: boolean
 }
-const props = withDefaults(defineProps<Props>(), { locked: false })
-const emit = defineEmits<{ changed: [] }>()
+const props = withDefaults(defineProps<Props>(), { locked: false, externalBusy: false })
+const emit = defineEmits<{ changed: []; 'dirty-change': [dirty: boolean]; 'bank-busy-change': [busy: boolean] }>()
 
 interface DraftQuestion {
   /** 服务端已有题目的 id；新增为 undefined */
@@ -54,6 +51,10 @@ const saveError = ref('')
 const fieldErrors = ref<Record<string, string>>({})
 const baseVersion = ref(props.exam.version)
 const serverConflict = ref(false)
+const selectedIds = ref<string[]>([])
+const importOpen = ref(false)
+const importedNotice = ref(false)
+const importBlocked = computed(() => dirty.value || dialogOpen.value || saving.value || baseVersion.value !== props.exam.version || !!props.exam.activeJob || props.externalBusy)
 
 function toDraft(question: QuestionAdminDTO): DraftQuestion {
   return {
@@ -77,6 +78,7 @@ function toDraft(question: QuestionAdminDTO): DraftQuestion {
 
 function syncFromExam(exam: ExamAdminDTO = props.exam): void {
   drafts.value = exam.questions.map(toDraft)
+  selectedIds.value = selectedIds.value.filter((id) => exam.questions.some((question) => question.id === id))
   originalSignature.value = signatureOf(drafts.value)
   baseVersion.value = exam.version
   serverConflict.value = false
@@ -98,6 +100,7 @@ function signatureOf(list: DraftQuestion[]): string {
 }
 
 const dirty = computed(() => signatureOf(drafts.value) !== originalSignature.value)
+watch(() => dirty.value || dialogOpen.value || saving.value, (value) => emit('dirty-change', value), { immediate: true })
 watch(() => props.exam.version, (version, previousVersion) => {
   if (previousVersion === undefined || (!dirty.value && !dialogOpen.value)) {
     syncFromExam()
@@ -127,29 +130,6 @@ const form = reactive<DraftQuestion>({
 const isEditing = computed(() => editingIndex.value >= 0)
 const dialogTitle = computed(() => (isEditing.value ? `编辑第 ${editingIndex.value + 1} 题` : '新增题目'))
 
-function buildOptions(type: QuestionType): QuestionOption[] {
-  if (type === 'true_false') return TRUE_FALSE_OPTIONS.map((option) => ({ ...option }))
-  if (type === 'fill_blank') return []
-  return CHOICE_OPTION_IDS.map((id) => ({ id, text: '' }))
-}
-
-function resetAnswerForType(type: QuestionType): void {
-  form.answerDefinition = {
-    correctOptionIds: [],
-    blanks: type === 'fill_blank' ? [newBlank(1)] : [],
-  }
-}
-
-function newBlank(index: number): BlankDefinition {
-  return { id: `b${index}`, acceptedAnswers: [''], caseSensitive: true }
-}
-
-function handleTypeChange(type: QuestionType): void {
-  form.type = type
-  form.options = buildOptions(type)
-  resetAnswerForType(type)
-}
-
 function openCreate(): void {
   editingIndex.value = -1
   dialogError.value = ''
@@ -157,7 +137,7 @@ function openCreate(): void {
   form.id = undefined
   form.type = 'single_choice'
   form.stem = ''
-  form.options = buildOptions('single_choice')
+  form.options = newQuestionContent().options
   form.answerDefinition = { correctOptionIds: [], blanks: [] }
   form.explanation = ''
   form.sourceRefs = [newSourceRef()]
@@ -191,44 +171,6 @@ function openEdit(index: number): void {
 
 function newSourceRef(): SourceRef {
   return { documentId: documents.value[0]?.id ?? '', locator: '', quote: '' }
-}
-
-function addBlank(): void {
-  form.answerDefinition.blanks.push(newBlank(form.answerDefinition.blanks.length + 1))
-}
-
-function removeBlank(index: number): void {
-  if (form.answerDefinition.blanks.length <= 1) return
-  form.answerDefinition.blanks.splice(index, 1)
-  form.answerDefinition.blanks.forEach((blank, position) => {
-    blank.id = `b${position + 1}`
-  })
-}
-
-/** acceptedAnswers 编辑用文本：一行一个可接受答案 */
-function blankAnswersText(blank: BlankDefinition): string {
-  return blank.acceptedAnswers.join('\n')
-}
-
-function setBlankAnswers(blank: BlankDefinition, text: string): void {
-  blank.acceptedAnswers = text.split('\n')
-}
-
-function toggleCorrectOption(optionId: string, checked: boolean): void {
-  const current = form.answerDefinition.correctOptionIds
-  if (form.type === 'single_choice' || form.type === 'true_false') {
-    form.answerDefinition.correctOptionIds = [optionId]
-    return
-  }
-  if (checked) {
-    if (!current.includes(optionId)) current.push(optionId)
-  } else {
-    form.answerDefinition.correctOptionIds = current.filter((id) => id !== optionId)
-  }
-}
-
-function isCorrect(optionId: string): boolean {
-  return form.answerDefinition.correctOptionIds.includes(optionId)
 }
 
 function addSourceRef(): void {
@@ -421,10 +363,16 @@ function answerSummary(question: DraftQuestion): string {
       .join('；')
   }
   const maps = new Map(question.options.map((option) => [option.id, option.text]))
+  if (question.type === 'true_false') return maps.get(question.answerDefinition.correctOptionIds[0] ?? '') ?? '未选择'
   return question.answerDefinition.correctOptionIds
     .map((id) => `${id}. ${maps.get(id) ?? ''}`)
     .join('；')
 }
+function toggleBankSelection(id: string, checked: boolean) {
+  selectedIds.value = checked ? [...selectedIds.value, id] : selectedIds.value.filter((item) => item !== id)
+}
+function bankOrigin(question: DraftQuestion) { return props.exam.questions.find((item) => item.id === question.id)?.bankOrigin }
+function imported() { importOpen.value = false; selectedIds.value = []; importedNotice.value = true }
 </script>
 
 <template>
@@ -436,6 +384,7 @@ function answerSummary(question: DraftQuestion): string {
           <span class="zj-muted qs__meta">共 {{ drafts.length }} 题 · 配分由服务端按整卷 100 分自动分配（只读）</span>
         </div>
         <div class="qs__actions">
+          <el-button :disabled="importBlocked || !selectedIds.length" @click="importOpen = true">存入题库（{{ selectedIds.length }}）</el-button>
           <el-button type="primary" :disabled="locked || saving || !!exam.activeJob" @click="openCreate">新增题目</el-button>
           <el-button :disabled="(!dirty && !serverConflict) || saving" @click="discardChanges">放弃修改</el-button>
           <el-button type="primary" plain :loading="saving" :disabled="locked || !dirty || serverConflict" @click="save">
@@ -444,6 +393,8 @@ function answerSummary(question: DraftQuestion): string {
         </div>
       </div>
     </template>
+
+    <p v-if="importedNotice">已存入题库，待审核。<NuxtLink to="/admin/question-bank">进入题库审核</NuxtLink></p>
 
     <el-alert
       v-if="locked"
@@ -477,6 +428,8 @@ function answerSummary(question: DraftQuestion): string {
       <li v-for="(question, index) in drafts" :key="question.id ?? `new-${index}`" class="qs__item">
         <div class="qs__item-main">
           <div class="qs__item-title">
+            <el-checkbox v-if="question.id" :model-value="selectedIds.includes(question.id)" :disabled="importBlocked" :aria-label="`选择第 ${index + 1} 题入库`"
+              @update:model-value="toggleBankSelection(question.id!, Boolean($event))" />
             <span class="qs__index zj-tabular">{{ index + 1 }}</span>
             <el-tag :type="typeTag[question.type]" effect="plain" size="small">
               {{ QUESTION_TYPE_LABELS[question.type] }}
@@ -487,6 +440,11 @@ function answerSummary(question: DraftQuestion): string {
           </div>
           <p class="qs__stem">{{ formatQuestionStem(question.stem, question.type) }}</p>
           <p class="zj-muted qs__answer">答案：{{ answerSummary(question) }}</p>
+          <p v-if="bankOrigin(question)" class="zj-muted">
+            <span v-if="bankOrigin(question)?.deleted">来源题库题目已删除</span>
+            <NuxtLink v-else :to="`/admin/question-bank?itemId=${bankOrigin(question)?.itemId}`">来源题库 · v{{ bankOrigin(question)?.version }}</NuxtLink>
+            · 本场修改不会同步到题库
+          </p>
         </div>
         <div class="qs__item-actions">
           <el-button text type="primary" :disabled="locked || saving" @click="openEdit(index)">编辑</el-button>
@@ -499,101 +457,7 @@ function answerSummary(question: DraftQuestion): string {
 
     <el-dialog v-model="dialogOpen" :title="dialogTitle" width="min(760px, 95vw)" top="6vh">
       <el-form label-position="top" class="qs__form">
-        <el-form-item label="题型">
-          <el-select :model-value="form.type" class="qs__type-select" @update:model-value="handleTypeChange">
-            <el-option
-              v-for="(label, value) in QUESTION_TYPE_LABELS"
-              :key="value"
-              :label="label"
-              :value="value"
-            />
-          </el-select>
-        </el-form-item>
-
-        <el-form-item label="题干" :error="dialogFieldErrors.stem">
-          <el-input
-            v-model="form.stem"
-            type="textarea"
-            :rows="3"
-            :maxlength="MAX_STEM_CHARS"
-            show-word-limit
-            placeholder="题目正文"
-          />
-        </el-form-item>
-
-        <template v-if="form.type !== 'fill_blank'">
-          <el-form-item
-            :label="form.type === 'true_false' ? '判断项与正确答案' : form.type === 'multiple_choice' ? '选项（勾选 2–3 个正确答案）' : '选项（选中 1 个正确答案）'"
-            :error="dialogFieldErrors.options || dialogFieldErrors.correct"
-          >
-            <div class="qs__options">
-              <div v-for="option in form.options" :key="option.id" class="qs__option">
-                <el-checkbox
-                  v-if="form.type === 'multiple_choice'"
-                  :model-value="isCorrect(option.id)"
-                  @update:model-value="(value) => toggleCorrectOption(option.id, Boolean(value))"
-                />
-                <el-radio
-                  v-else
-                  :model-value="isCorrect(option.id) ? option.id : ''"
-                  :value="option.id"
-                  @update:model-value="toggleCorrectOption(option.id, true)"
-                >
-                  <span class="qs__option-id">{{ option.id }}</span>
-                </el-radio>
-                <el-input
-                  v-model="option.text"
-                  :maxlength="MAX_OPTION_TEXT_CHARS"
-                  :placeholder="`选项 ${option.id}`"
-                  :disabled="form.type === 'true_false'"
-                  class="qs__option-input"
-                />
-              </div>
-            </div>
-          </el-form-item>
-        </template>
-
-        <template v-else>
-          <el-form-item label="空位与可接受答案（一行一个答案）" :error="dialogFieldErrors.blanks">
-            <div class="qs__blanks">
-              <div v-for="(blank, blankIndex) in form.answerDefinition.blanks" :key="blank.id" class="qs__blank">
-                <div class="qs__blank-head">
-                  <span class="qs__option-id">第 {{ blankIndex + 1 }} 空（{{ blank.id }}）</span>
-                  <el-button
-                    text
-                    type="danger"
-                    :disabled="form.answerDefinition.blanks.length <= 1"
-                    @click="removeBlank(blankIndex)"
-                  >
-                    删除此空
-                  </el-button>
-                </div>
-                <el-input
-                  :model-value="blankAnswersText(blank)"
-                  type="textarea"
-                  :rows="2"
-                  placeholder="例如：<br>应急照明"
-                  @update:model-value="(value) => setBlankAnswers(blank, String(value))"
-                />
-                <label class="qs__case">
-                  <el-switch v-model="blank.caseSensitive" />
-                  <span>区分大小写{{ blank.caseSensitive ? '' : '（不区分）' }}</span>
-                </label>
-              </div>
-              <el-button text type="primary" @click="addBlank">添加空位</el-button>
-            </div>
-          </el-form-item>
-        </template>
-
-        <el-form-item label="解析" :error="dialogFieldErrors.explanation">
-          <el-input
-            v-model="form.explanation"
-            type="textarea"
-            :rows="2"
-            :maxlength="MAX_EXPLANATION_CHARS"
-            show-word-limit
-          />
-        </el-form-item>
+        <AdminQuestionContentFields :model-value="form" :errors="dialogFieldErrors" @update:model-value="Object.assign(form, $event)" />
 
         <el-form-item label="资料引用（至少 1 条：资料 + 定位 + 摘录）" :error="dialogFieldErrors.sourceRefs">
           <div class="qs__refs">
@@ -626,6 +490,7 @@ function answerSummary(question: DraftQuestion): string {
         <el-button type="primary" @click="applyForm">确定</el-button>
       </template>
     </el-dialog>
+    <AdminExamToBankDialog v-model="importOpen" :exam="exam" :question-ids="selectedIds" @completed="imported" @busy-change="emit('bank-busy-change', $event)" />
   </el-card>
 </template>
 
@@ -722,53 +587,11 @@ function answerSummary(question: DraftQuestion): string {
   align-items: flex-start;
 }
 
-.qs__type-select {
-  width: 200px;
-}
-
-.qs__options,
-.qs__blanks,
 .qs__refs {
   display: flex;
   flex-direction: column;
   gap: 10px;
   width: 100%;
-}
-
-.qs__option {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.qs__option-id {
-  font-family: var(--zj-mono);
-  font-size: 14px;
-}
-
-.qs__option-input {
-  flex: 1;
-}
-
-.qs__blank {
-  border: 1px solid var(--zj-border);
-  border-radius: var(--zj-radius);
-  padding: 10px 12px;
-}
-
-.qs__blank-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 6px;
-}
-
-.qs__case {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 6px;
-  font-size: 14px;
 }
 
 .qs__ref {

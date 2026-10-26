@@ -41,6 +41,11 @@ export function countChars(value: string): number {
   return Array.from(value).length
 }
 
+/** 参数化 LIKE 中的通配符按字面量查询。 */
+export function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/gu, (char) => `\\${char}`)
+}
+
 export interface TextRule {
   /** 最大字符数（Unicode 码点） */
   max?: number

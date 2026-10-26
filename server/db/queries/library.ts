@@ -1,6 +1,9 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { DocumentFormat } from '../../../shared/types/exam'
 import type { LibraryFileDTO, LibraryFileSource } from '../../../shared/types/library'
+import { escapeLike } from '../../utils/validate'
+import { bankUsageCounts } from './question-bank'
+export { escapeLike } from '../../utils/validate'
 
 /** library_files 表行 */
 export interface LibraryFileRecord {
@@ -36,6 +39,7 @@ export interface LibraryFileListRow {
   originExamTitle: string | null
   usageCount: number
   usedByExamTitles: string[]
+  questionBankCount: number
 }
 
 /** 引用该库文件的场次（删除受阻时提示用） */
@@ -95,10 +99,6 @@ function mapLibraryFileRow(row: RawLibraryRow): LibraryFileRecord {
 }
 
 /** LIKE 通配转义：关键词里的 % 与 _ 按字面量匹配 */
-export function escapeLike(value: string): string {
-  return value.replace(/[\\%_]/gu, (char) => `\\${char}`)
-}
-
 /**
  * 引用统计：一次 documents LEFT JOIN exams 覆盖当前页全部库条目，
  * 同一场次的重复引用只计一次；标题按字典序取前 3 个由调用方截断。
@@ -164,6 +164,7 @@ export function listLibraryFileRows(
     )
     .all(...params, filter.limit, filter.offset) as unknown as RawLibraryRow[]
   const usage = listUsageByLibraryFileIds(db, files.map((row) => row.id))
+  const bankUsage = bankUsageCounts(db, files.map((row) => row.id))
   return {
     total: Number(totalRow?.total ?? 0),
     rows: files.map((row) => {
@@ -173,6 +174,7 @@ export function listLibraryFileRows(
         originExamTitle: row.origin_exam_title ?? null,
         usageCount: references.length,
         usedByExamTitles: references.slice(0, 3).map((reference) => reference.title),
+        questionBankCount: bankUsage.get(row.id) ?? 0,
       }
     }),
   }
@@ -332,6 +334,7 @@ export function toLibraryFileDTO(row: LibraryFileListRow): LibraryFileDTO {
     originExamTitle: row.originExamTitle,
     usageCount: row.usageCount,
     usedByExamTitles: row.usedByExamTitles,
+    questionBankCount: row.questionBankCount,
     createdAt: row.file.createdAt,
     updatedAt: row.file.updatedAt,
   }

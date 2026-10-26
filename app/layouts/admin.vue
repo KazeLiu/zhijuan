@@ -16,6 +16,7 @@ const navItems = [
   { path: '/admin', label: '概览' },
   { path: '/admin/exams', label: '考试场次' },
   { path: '/admin/library', label: '资料库' },
+  { path: '/admin/question-bank', label: '题库' },
   { path: '/admin/settings', label: '模型设置' },
 ]
 
@@ -23,6 +24,7 @@ const activePath = computed(() => {
   const path = route.path
   if (path.startsWith('/admin/exams')) return '/admin/exams'
   if (path.startsWith('/admin/library')) return '/admin/library'
+  if (path.startsWith('/admin/question-bank')) return '/admin/question-bank'
   if (path.startsWith('/admin/settings')) return '/admin/settings'
   return '/admin'
 })

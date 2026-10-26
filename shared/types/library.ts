@@ -17,8 +17,9 @@ export interface LibraryFileDTO {
   source: LibraryFileSource
   originExamId: string | null
   originExamTitle: string | null
-  /** 被多少个场次资料引用（0 = 可安全删除） */
+  /** 被多少个场次资料引用，不包含题库引用。 */
   usageCount: number
+  questionBankCount: number
   /** 引用它的场次标题（最多 3 个，供删除受阻时提示） */
   usedByExamTitles: string[]
   createdAt: EpochMs

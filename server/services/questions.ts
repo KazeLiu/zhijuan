@@ -141,11 +141,9 @@ function normalizeCorrectOptionIds(raw: unknown, inputOptions: unknown, type: Qu
 }
 
 /**
- * 校验并规范化一题（§7.4）：只做结构校验与 ID 归一化，
- * 不做资料引用校验（需要数据库）。
+ * 规范化两种编辑器共享的题目内容。调用方负责完整结构及各自作用域的引用校验。
  */
-export function prepareQuestionInput(raw: unknown, index: number): PreparedQuestion {
-  const input = asObject(raw, index, 'question')
+export function prepareQuestionContent(input: Record<string, unknown>, index: number): Omit<PreparedQuestion, 'sourceRefs'> {
   const type = input.type as QuestionType
   if (type !== 'single_choice' && type !== 'multiple_choice' && type !== 'true_false' && type !== 'fill_blank') {
     throwApi('QUESTION_SET_INVALID', `第 ${index + 1} 题的题型不合法`, { index, reason: 'unknown type' })
@@ -161,6 +159,16 @@ export function prepareQuestionInput(raw: unknown, index: number): PreparedQuest
     type,
     index,
   )
+  const existingId = typeof input.id === 'string' && input.id.trim() !== '' ? input.id.trim() : null
+  return {
+    existingId, type, stem, options,
+    answerDefinition: { correctOptionIds, blanks }, explanation,
+  }
+}
+
+export function prepareQuestionInput(raw: unknown, index: number): PreparedQuestion {
+  const input = asObject(raw, index, 'question')
+  const content = prepareQuestionContent(input, index)
   const sourceRefsRaw = input.sourceRefs
   if (!Array.isArray(sourceRefsRaw)) {
     throwApi('QUESTION_SET_INVALID', `第 ${index + 1} 题缺少资料引用`, { index, reason: 'sourceRefs 不是数组' })
@@ -174,25 +182,17 @@ export function prepareQuestionInput(raw: unknown, index: number): PreparedQuest
     }
   })
 
-  const existingId = typeof input.id === 'string' && input.id.trim() !== '' ? input.id.trim() : null
-  const candidate = {
-    type,
-    stem,
-    options,
-    answerDefinition: { correctOptionIds, blanks } satisfies AnswerDefinition,
-    explanation,
-    sourceRefs,
-  }
+  const candidate = { ...content, sourceRefs }
   const issue = findQuestionStructureIssue(candidate)
   if (issue) {
     throwApi('QUESTION_SET_INVALID', `第 ${index + 1} 题不符合题目规则：${issue.reason}`, {
       index,
-      questionId: existingId ?? undefined,
+      questionId: content.existingId ?? undefined,
       field: issue.field,
       reason: issue.reason,
     })
   }
-  return { existingId, ...candidate }
+  return candidate
 }
 
 /** 仅做结构校验（发布预检用，已入库题目） */
@@ -249,12 +249,13 @@ export function saveQuestions(
     })
     const units = prepared.length > 0 ? allocateUnits(SCORE_TOTAL_UNITS, prepared.length) : []
     // 既有题目 id 集合：保留传入的 id 以免前端持有的引用失效，其余一律新建
-    const existingIds = new Set(listQuestions(db, examId).map((question) => question.id))
+    const existingQuestions = new Map(listQuestions(db, examId).map((question) => [question.id, question]))
     // 整体替换：先清空旧题（草稿阶段不可能存在答卷，answers 无残留），再按顺序重写
     deleteQuestionsNotIn(db, examId, [])
     const keepIds: string[] = []
     prepared.forEach((question, index) => {
-      const existing = question.existingId && existingIds.has(question.existingId) ? question.existingId : null
+      const prior = question.existingId ? existingQuestions.get(question.existingId) : undefined
+      const existing = prior?.id
       const id = existing ?? randomUUID()
       insertQuestion(
         db,
@@ -269,6 +270,7 @@ export function saveQuestions(
           explanation: question.explanation,
           sourceRefs: question.sourceRefs,
           maxScoreUnits: units[index] ?? 0,
+          bankOrigin: prior?.bankOrigin ?? null,
         },
         now,
       )

@@ -220,7 +220,7 @@ function checkStemPlaceholders(stem: string, blanks: Array<{ id: string }>): Str
 }
 
 /** 题目结构合法性（§7.4）：通过返回 null，否则返回具体问题 */
-export function findQuestionStructureIssue(question: QuestionStructureCandidate): StructureIssue | null {
+export function findQuestionContentIssue(question: Omit<QuestionStructureCandidate, 'sourceRefs'>): StructureIssue | null {
   if (question.stem.trim() === '') return { field: 'stem', reason: '题干不能为空' }
   if (countTextChars(question.stem) > MAX_STEM_CHARS) {
     return { field: 'stem', reason: `题干不能超过 ${MAX_STEM_CHARS} 字` }
@@ -229,22 +229,6 @@ export function findQuestionStructureIssue(question: QuestionStructureCandidate)
   if (countTextChars(question.explanation) > MAX_EXPLANATION_CHARS) {
     return { field: 'explanation', reason: `解析不能超过 ${MAX_EXPLANATION_CHARS} 字` }
   }
-  if (question.sourceRefs.length === 0) return { field: 'sourceRefs', reason: '至少需要一条资料引用' }
-  for (const [index, ref] of question.sourceRefs.entries()) {
-    if (typeof ref.documentId !== 'string' || ref.documentId === '') {
-      return { field: 'sourceRefs', reason: `第 ${index + 1} 条引用缺少资料` }
-    }
-    if (typeof ref.locator !== 'string' || ref.locator === '') {
-      return { field: 'sourceRefs', reason: `第 ${index + 1} 条引用缺少定位` }
-    }
-    if (typeof ref.quote !== 'string') {
-      return { field: 'sourceRefs', reason: `第 ${index + 1} 条引用摘录必须是文本` }
-    }
-    if (countTextChars(ref.quote) > MAX_QUOTE_CHARS) {
-      return { field: 'sourceRefs', reason: `引用摘录不能超过 ${MAX_QUOTE_CHARS} 字` }
-    }
-  }
-
   const correctOptionIds = question.answerDefinition.correctOptionIds
   const blanks = question.answerDefinition.blanks
 
@@ -319,4 +303,24 @@ export function findQuestionStructureIssue(question: QuestionStructureCandidate)
     }
   }
   return checkStemPlaceholders(question.stem, blanks)
+}
+
+/** 场次题目额外要求本场 documentId；题库引用由自己的资料库校验处理。 */
+export function findQuestionStructureIssue(question: QuestionStructureCandidate): StructureIssue | null {
+  const contentIssue = findQuestionContentIssue(question)
+  if (contentIssue) return contentIssue
+  if (question.sourceRefs.length === 0) return { field: 'sourceRefs', reason: '至少需要一条资料引用' }
+  for (const [index, ref] of question.sourceRefs.entries()) {
+    if (typeof ref.documentId !== 'string' || ref.documentId === '') {
+      return { field: 'sourceRefs', reason: `第 ${index + 1} 条引用缺少资料` }
+    }
+    if (typeof ref.locator !== 'string' || ref.locator === '') {
+      return { field: 'sourceRefs', reason: `第 ${index + 1} 条引用缺少定位` }
+    }
+    if (typeof ref.quote !== 'string') return { field: 'sourceRefs', reason: `第 ${index + 1} 条引用摘录必须是文本` }
+    if (countTextChars(ref.quote) > MAX_QUOTE_CHARS) {
+      return { field: 'sourceRefs', reason: `引用摘录不能超过 ${MAX_QUOTE_CHARS} 字` }
+    }
+  }
+  return null
 }

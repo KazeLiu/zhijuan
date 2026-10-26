@@ -119,10 +119,12 @@ async function handleFileChange(event: Event): Promise<void> {
 /* ------------------------------ 删除 ------------------------------ */
 const deletingId = ref('')
 const actionError = ref('')
+const blockedReferences = ref<{ exams: Array<{ id: string; title: string }>; bank: Array<{ id: string; stem: string }> }>({ exams: [], bank: [] })
 
 async function removeFile(record: unknown): Promise<void> {
   const row = record as LibraryFileDTO
   actionError.value = ''
+  blockedReferences.value = { exams: [], bank: [] }
   try {
     await ElMessageBox.confirm(
       `将从资料库删除《${row.originalName}》及其物理文件，删除后不可恢复。`,
@@ -143,6 +145,10 @@ async function removeFile(record: unknown): Promise<void> {
     else await refresh()
   } catch (error) {
     actionError.value = describeApiError(error, '删除失败')
+    if (error instanceof ApiClientError && error.code === 'LIBRARY_FILE_IN_USE') {
+      const detail = error.details as { exams?: Array<{ id: string; title: string }>; questionBankItems?: Array<{ id: string; stem: string }> }
+      blockedReferences.value = { exams: detail.exams ?? [], bank: detail.questionBankItems ?? [] }
+    }
   } finally {
     deletingId.value = ''
   }
@@ -270,7 +276,10 @@ function usageTip(record: unknown): string {
       :title="actionError"
       class="library__notice"
       @close="actionError = ''"
-    />
+    >
+      <p v-for="item in blockedReferences.exams" :key="item.id"><NuxtLink :to="`/admin/exams/${item.id}`">场次：{{ item.title }}</NuxtLink></p>
+      <p v-for="item in blockedReferences.bank" :key="item.id"><NuxtLink :to="`/admin/question-bank?itemId=${item.id}`">题库：{{ item.stem }}</NuxtLink></p>
+    </el-alert>
     <el-alert
       v-if="limitReached"
       type="info"
@@ -355,12 +364,13 @@ function usageTip(record: unknown): string {
           </template>
         </el-table-column>
 
-        <el-table-column label="被引用次数" width="120" align="right">
+        <el-table-column label="引用" width="170" align="right">
           <template #default="{ row }">
             <el-tooltip v-if="row.usageCount > 0" :content="usageTip(row)" placement="top">
               <el-tag type="warning" effect="plain" size="small">{{ row.usageCount }} 个场次</el-tag>
             </el-tooltip>
-            <span v-else class="zj-muted">未被引用</span>
+            <NuxtLink v-if="row.questionBankCount > 0" :to="`/admin/question-bank?libraryFileId=${row.id}`"><el-tag type="info" effect="plain" size="small">{{ row.questionBankCount }} 道题库题</el-tag></NuxtLink>
+            <span v-if="row.usageCount === 0 && row.questionBankCount === 0" class="zj-muted">未被引用</span>
           </template>
         </el-table-column>
 
@@ -373,12 +383,12 @@ function usageTip(record: unknown): string {
         <el-table-column label="操作" width="150" align="right" fixed="right">
           <template #default="{ row }">
             <el-button text type="primary" @click="openPreview(row)">预览</el-button>
-            <el-tooltip :disabled="row.usageCount === 0" content="被场次引用，先到场次里移除" placement="top">
+            <el-tooltip :disabled="row.usageCount === 0 && row.questionBankCount === 0" content="仍被场次或题库引用，请先移除引用" placement="top">
               <span class="library__delete-wrap">
                 <el-button
                   text
                   type="danger"
-                  :disabled="row.usageCount > 0"
+                  :disabled="row.usageCount > 0 || row.questionBankCount > 0"
                   :loading="deletingId === row.id"
                   @click="removeFile(row)"
                 >

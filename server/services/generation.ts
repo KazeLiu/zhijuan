@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite'
-import { randomInt, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import type { BlueprintDTO } from '../../shared/types/exam'
 import type { QuestionType } from '../../shared/types/question'
 import { QUESTION_TYPE_LABELS } from '../../shared/types/question'
@@ -28,6 +28,7 @@ import { findDocumentById, listDocuments } from '../db/queries/documents'
 import { findProviderSettings } from '../db/queries/settings'
 import { ApiFailure, throwApi } from '../utils/respond'
 import { withTransaction } from '../utils/db'
+import { shuffle } from '../utils/shuffle'
 import { FieldErrors, readExpectedVersion } from '../utils/validate'
 import { buildBatchMessages } from '../ai/prompt'
 import { parseBatchResponse } from '../ai/parser'
@@ -139,19 +140,6 @@ export function createGenerationJob(
   const created = findJob(db, jobId)
   if (!created) throw new ApiFailure('INTERNAL_ERROR', '出题任务创建失败')
   return created
-}
-
-function shuffle<T>(items: T[]): T[] {
-  const copy = [...items]
-  for (let index = copy.length - 1; index > 0; index -= 1) {
-    const swapWith = randomInt(0, index + 1)
-    const current = copy[index]
-    const other = copy[swapWith]
-    if (current === undefined || other === undefined) continue
-    copy[index] = other
-    copy[swapWith] = current
-  }
-  return copy
 }
 
 /** 单批最多尝试次数：模型输出不稳定（超时/格式漂移/引用改写）时重试一次 */

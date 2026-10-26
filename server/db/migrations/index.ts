@@ -4,5 +4,6 @@ import type { Migration } from '../types'
 import { migration as m001 } from './001-init'
 import { migration as m002 } from './002-library'
 import { migration as m003 } from './003-job-output'
+import { migration as m004 } from './004-question-bank'
 
-export const migrations: Migration[] = [m001, m002, m003]
+export const migrations: Migration[] = [m001, m002, m003, m004]

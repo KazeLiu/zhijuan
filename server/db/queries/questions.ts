@@ -22,6 +22,7 @@ export interface QuestionRow {
   explanation: string
   sourceRefs: SourceRef[]
   maxScoreUnits: number
+  bankOrigin: { itemId: string; version: number } | null
 }
 
 interface RawQuestionRow {
@@ -35,6 +36,8 @@ interface RawQuestionRow {
   explanation: string
   source_refs_json: string
   max_score_units: number
+  source_bank_item_id: string | null
+  source_bank_item_version: number | null
 }
 
 function parseArray<T>(raw: string): T[] {
@@ -91,11 +94,15 @@ function mapQuestionRow(row: RawQuestionRow): QuestionRow {
         typeof ref?.documentId === 'string' && typeof ref?.locator === 'string' && typeof ref?.quote === 'string',
     ),
     maxScoreUnits: Number(row.max_score_units),
+    bankOrigin: row.source_bank_item_id === null ? null : {
+      itemId: row.source_bank_item_id,
+      version: row.source_bank_item_version!,
+    },
   }
 }
 
 const QUESTION_COLUMNS = `id, exam_id, position, type, stem, options_json, answer_definition_json,
-  explanation, source_refs_json, max_score_units`
+  explanation, source_refs_json, max_score_units, source_bank_item_id, source_bank_item_version`
 
 /** 按 position 升序读取整卷题目 */
 export function listQuestions(db: DatabaseSync, examId: string): QuestionRow[] {
@@ -123,13 +130,14 @@ export interface QuestionInsert {
   explanation: string
   sourceRefs: SourceRef[]
   maxScoreUnits: number
+  bankOrigin?: { itemId: string; version: number } | null
 }
 
 export function insertQuestion(db: DatabaseSync, question: QuestionInsert, now: number): void {
   db.prepare(
     `INSERT INTO questions (id, exam_id, position, type, stem, options_json, answer_definition_json,
-      explanation, source_refs_json, max_score_units, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      explanation, source_refs_json, max_score_units, created_at, updated_at, source_bank_item_id, source_bank_item_version)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     question.id,
     question.examId,
@@ -143,6 +151,8 @@ export function insertQuestion(db: DatabaseSync, question: QuestionInsert, now: 
     question.maxScoreUnits,
     now,
     now,
+    question.bankOrigin?.itemId ?? null,
+    question.bankOrigin?.version ?? null,
   )
 }
 
@@ -180,7 +190,20 @@ export function toQuestionAdminDTO(row: QuestionRow): QuestionAdminDTO {
     explanation: row.explanation,
     sourceRefs: row.sourceRefs,
     maxScoreUnits: row.maxScoreUnits,
+    bankOrigin: row.bankOrigin ? { ...row.bankOrigin, deleted: false } : null,
   }
+}
+
+/** 只有管理端需要核对来源是否删除，考生读取和评分不查询题库。 */
+export function toQuestionAdminDTOs(db: DatabaseSync, rows: QuestionRow[]): QuestionAdminDTO[] {
+  const ids = [...new Set(rows.flatMap((row) => row.bankOrigin ? [row.bankOrigin.itemId] : []))]
+  const existing = new Set(ids.length ? (db.prepare(`SELECT id FROM question_bank_items WHERE id IN (${ids.map(() => '?').join(',')})`)
+    .all(...ids) as Array<{ id: string }>).map((row) => row.id) : [])
+  return rows.map((row) => {
+    const dto = toQuestionAdminDTO(row)
+    if (dto.bankOrigin) dto.bankOrigin.deleted = !existing.has(dto.bankOrigin.itemId)
+    return dto
+  })
 }
 
 /** 考生题目 DTO：不含答案、解析、资料原文（§8.3 7） */

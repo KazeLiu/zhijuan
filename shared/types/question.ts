@@ -59,6 +59,8 @@ export interface QuestionAdminDTO {
   sourceRefs: SourceRef[]
   /** 服务端配分结果，整数单位 */
   maxScoreUnits: number
+  /** 从题库复制时的来源；已有场次内容不随题库变化。 */
+  bankOrigin: { itemId: string; version: number; deleted: boolean } | null
 }
 
 /** PUT /admin/exams/:id/questions 的输入项；position 由数组顺序决定 */

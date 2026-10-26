@@ -11,7 +11,7 @@ import type {
 } from '../../shared/types/admin'
 import { DEFAULT_PAGE_SIZE, MAX_GRADE_REASON_CHARS, PASS_SCORE_UNITS } from '../../shared/constants'
 import { findExam, type ExamRow } from '../db/queries/exams'
-import { findQuestion, listQuestions, toQuestionAdminDTO } from '../db/queries/questions'
+import { findQuestion, listQuestions, toQuestionAdminDTOs } from '../db/queries/questions'
 import {
   answerMapFromRows,
   countAttempts,
@@ -218,7 +218,7 @@ export function loadAttemptAdminDetail(db: DatabaseSync, attemptId: string, now:
     totalScoreUnits: attempt.totalScoreUnits,
     version: attempt.version,
     exam: { ...toExamPublicDTO(exam), questionCount: questions.length },
-    questions: questions.map(toQuestionAdminDTO),
+    questions: toQuestionAdminDTOs(db, questions),
     answers,
     grades,
     gradeChanges: listGradeChanges(db, attempt.id),

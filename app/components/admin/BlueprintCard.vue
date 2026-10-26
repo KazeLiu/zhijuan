@@ -19,7 +19,7 @@ interface Props {
   locked?: boolean
 }
 const props = withDefaults(defineProps<Props>(), { locked: false })
-const emit = defineEmits<{ changed: []; addListen: [jobId: string] }>()
+const emit = defineEmits<{ changed: []; addListen: [jobId: string]; 'dirty-change': [dirty: boolean] }>()
 
 const blueprint = reactive<BlueprintDTO>({ ...props.exam.blueprint })
 const saving = ref(false)
@@ -112,6 +112,7 @@ function clampCount(key: 'singleChoice' | 'multipleChoice' | 'trueFalse' | 'fill
   const value = Number(blueprint[key])
   blueprint[key] = Number.isFinite(value) ? Math.max(0, Math.min(MAX_QUESTIONS, Math.trunc(value))) : 0
 }
+watch(() => blueprintDirty.value || saving.value || generating.value || retrying.value, (value) => emit('dirty-change', value), { immediate: true })
 
 async function saveBlueprint(): Promise<number | null> {
   saving.value = true
@@ -226,7 +227,7 @@ defineExpose({ refreshJob })
   <el-card shadow="never" class="bp">
     <template #header>
       <div class="bp__head">
-        <span class="bp__title">题数与难度</span>
+        <span class="bp__title">组卷与出题</span>
         <span class="zj-muted bp__total">合计 <strong class="zj-tabular">{{ total }}</strong> 题</span>
       </div>
     </template>
@@ -308,11 +309,15 @@ defineExpose({ refreshJob })
       <el-button :loading="saving" :disabled="locked || jobRunning || !blueprintDirty" @click="saveBlueprint">
         保存出题设定
       </el-button>
-      <el-button type="primary" :loading="generating" :disabled="generateBlockers.length > 0" @click="generate">
-        {{ jobRunning ? '出题进行中…' : '开始 AI 出题' }}
-      </el-button>
       <span v-if="blueprintDirty" class="zj-muted bp__dirty">设定已修改但未保存，出题前会自动保存</span>
     </div>
+
+    <slot name="question-bank" />
+    <el-divider />
+    <h3>AI 出题</h3>
+    <el-button type="primary" plain :loading="generating" :disabled="generateBlockers.length > 0" @click="generate">
+      {{ jobRunning ? '出题进行中…' : '开始 AI 出题' }}
+    </el-button>
 
     <el-alert v-if="generateBlockers.length" type="info" :closable="false" class="bp__alert">
       <template #title>
@@ -361,7 +366,7 @@ defineExpose({ refreshJob })
           <p class="bp__job-err">
             {{ activeJob.errorCode ? `错误码：${activeJob.errorCode}` : '请检查模型设置与资料后重试。' }}
           </p>
-          <el-button size="small" type="primary" :loading="retrying" @click="retryJob">重试出题</el-button>
+          <el-button size="small" type="primary" :loading="retrying" :disabled="locked" @click="retryJob">重试出题</el-button>
         </template>
       </el-alert>
     </div>

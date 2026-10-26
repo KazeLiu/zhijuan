@@ -25,7 +25,7 @@ export class ApiClientError extends Error {
 
 export interface ApiRequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
-  query?: Record<string, string | number | boolean | null | undefined>
+  query?: Record<string, string | string[] | number | boolean | null | undefined>
   body?: unknown
   /** true = 不自动弹全局错误提示（页面自行展示内联错误或冲突弹窗） */
   silent?: boolean

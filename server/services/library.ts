@@ -16,7 +16,6 @@ import {
   deleteLibraryFileRow,
   findLibraryFile,
   findLibraryFilesByIds,
-  getLibraryFileText,
   insertLibraryFile,
   listExamLibraryFileIds,
   listLibraryFileRows,
@@ -24,6 +23,7 @@ import {
   listLibrarySegments,
   toLibraryFileDTO,
   type LibraryFileListRow,
+  type LibraryFileRecord,
 } from '../db/queries/library'
 import {
   countDocuments,
@@ -31,9 +31,11 @@ import {
   insertDocument,
   sumDocumentChars,
   toDocumentDTO,
+  type DocumentRecord,
 } from '../db/queries/documents'
 import { findExam } from '../db/queries/exams'
 import { findActiveJob } from '../db/queries/jobs'
+import { bankReferencesForFile } from '../db/queries/question-bank'
 import { ApiFailure, throwApi } from '../utils/respond'
 import { withTransaction } from '../utils/db'
 import { ensureDataDirs, getStorageRoot, getUploadsDir } from '../utils/paths'
@@ -41,6 +43,17 @@ import { detectFormat, parseDocumentBytes, type UploadedFile } from './documents
 
 /** 删除受阻时在 details.exams 里回显的场次上限（§L4.4） */
 const MAX_REFERENCE_EXAMS = 5
+
+/** 调用方持有写事务并已完成权限、数量及资料校验；只复制本场元数据和定位段。 */
+export function copyLibraryFileToExam(db: DatabaseSync, examId: string, file: LibraryFileRecord, now: number): DocumentRecord {
+  const id = randomUUID()
+  insertDocument(db, {
+    id, examId, libraryFileId: file.id, originalName: file.originalName, format: file.format,
+    byteSize: file.byteSize, storagePath: file.storagePath, charCount: file.charCount,
+    segments: listLibrarySegments(db, file.id),
+  }, now)
+  return findDocument(db, examId, id)!
+}
 
 export interface LibraryListParams {
   page: number
@@ -111,6 +124,7 @@ export async function uploadLibraryFile(
     originExamTitle: null,
     usageCount: 0,
     usedByExamTitles: [],
+    questionBankCount: 0,
   })
 }
 
@@ -140,7 +154,17 @@ export function previewLibraryFile(
 ): DocumentPreviewDTO {
   const file = findLibraryFile(db, libraryFileId)
   if (!file) throw new ApiFailure('NOT_FOUND', '资料不存在')
-  const chars = Array.from(getLibraryFileText(db, libraryFileId))
+  const parts = listLibrarySegments(db, libraryFileId)
+  const chars = Array.from(parts.map((part) => part.text).join('\n'))
+  let position = 0
+  const segments: Array<{ locator: string; text: string }> = []
+  for (const part of parts) {
+    const text = Array.from(part.text)
+    const from = Math.max(0, offset - position)
+    const to = Math.min(text.length, offset + limit - position)
+    if (to > from) segments.push({ locator: part.locator, text: text.slice(from, to).join('') })
+    position += text.length + 1
+  }
   return {
     documentId: libraryFileId,
     originalName: file.originalName,
@@ -152,21 +176,26 @@ export function previewLibraryFile(
     limit,
     text: chars.slice(offset, offset + limit).join(''),
     truncated: offset + limit < chars.length,
+    segments,
   }
 }
 
-/** 删除库文件（§L4.4）：被场次引用 409 LIBRARY_FILE_IN_USE；成功同时删物理文件 */
+/** 被场次或任意状态题库题引用时不能删除；成功后同时清理物理文件。 */
 export async function deleteLibraryFile(db: DatabaseSync, libraryFileId: string): Promise<void> {
-  const file = findLibraryFile(db, libraryFileId)
-  if (!file) throw new ApiFailure('NOT_FOUND', '资料不存在')
-  const references = listLibraryReferences(db, libraryFileId, MAX_REFERENCE_EXAMS)
-  if (references.length > 0) {
-    throw new ApiFailure('LIBRARY_FILE_IN_USE', '该资料已被场次引用，无法删除', {
-      exams: references.map((reference) => ({ id: reference.examId, title: reference.title })),
-    })
-  }
-  withTransaction(db, () => {
+  const file = withTransaction(db, () => {
+    const current = findLibraryFile(db, libraryFileId)
+    if (!current) throw new ApiFailure('NOT_FOUND', '资料不存在')
+    const references = listLibraryReferences(db, libraryFileId, MAX_REFERENCE_EXAMS)
+    const bankReferences = bankReferencesForFile(db, libraryFileId)
+    if (references.length || bankReferences.length) {
+      throw new ApiFailure('LIBRARY_FILE_IN_USE', '该资料仍被场次或题库引用，无法删除', {
+        exams: references.map((reference) => ({ id: reference.examId, title: reference.title })),
+        questionBankItems: bankReferences.slice(0, 5).map((item) => ({ id: item.id, stem: item.stem.slice(0, 120) })),
+        questionBankCount: bankReferences.length,
+      })
+    }
     deleteLibraryFileRow(db, libraryFileId)
+    return current
   })
   const absolutePath = join(getStorageRoot(), file.storagePath)
   await unlink(absolutePath).catch(() => undefined)
@@ -237,29 +266,7 @@ export function attachLibraryFilesToExam(
     for (const id of wanted) {
       const file = byId.get(id)
       if (!file) continue
-      const documentId = randomUUID()
-      const segments = listLibrarySegments(db, id).map((segment) => ({
-        locator: segment.locator,
-        startOffset: segment.startOffset,
-        endOffset: segment.endOffset,
-        text: segment.text,
-      }))
-      insertDocument(
-        db,
-        {
-          id: documentId,
-          examId,
-          libraryFileId: file.id,
-          originalName: file.originalName,
-          format: file.format,
-          byteSize: file.byteSize,
-          storagePath: file.storagePath,
-          charCount: file.charCount,
-          segments,
-        },
-        now,
-      )
-      documentIds.push(documentId)
+      documentIds.push(copyLibraryFileToExam(db, examId, file, now).id)
     }
   })
 
