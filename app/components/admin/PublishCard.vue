@@ -40,6 +40,7 @@ const canUnpublish = computed(
   () => isPublished.value && props.exam.phase === 'upcoming' && props.exam.attemptCount === 0,
 )
 const policyDirty = computed(() => policy.value !== props.exam.answerRevealPolicy)
+const jobActive = computed(() => isJobActive(props.exam.activeJob?.status))
 
 async function savePolicy(): Promise<void> {
   busy.value = true
@@ -161,12 +162,12 @@ function conflictText(item: ConflictItem): string {
 
     <section class="pub__section">
       <h3 class="pub__subtitle">答案公开策略</h3>
-      <el-radio-group v-model="policy" :disabled="isPublished || busy">
+      <el-radio-group v-model="policy" :disabled="isPublished || busy || jobActive">
         <el-radio value="immediate" class="pub__radio">{{ REVEAL_POLICY_LABELS.immediate }}</el-radio>
         <el-radio value="after_exam" class="pub__radio">{{ REVEAL_POLICY_LABELS.after_exam }}</el-radio>
       </el-radio-group>
       <div class="pub__inline">
-        <el-button :loading="busy" :disabled="!policyDirty || isPublished" @click="savePolicy">
+        <el-button :loading="busy" :disabled="!policyDirty || isPublished || jobActive" @click="savePolicy">
           保存公开策略
         </el-button>
         <span class="zj-muted pub__hint">
@@ -218,7 +219,7 @@ function conflictText(item: ConflictItem): string {
       <el-button v-else type="warning" plain :loading="busy" :disabled="!canUnpublish" @click="unpublish">
         撤回发布
       </el-button>
-      <el-button v-if="!isPublished" text type="danger" :disabled="busy" @click="removeExam">删除场次</el-button>
+      <el-button v-if="!isPublished" text type="danger" :disabled="busy || jobActive" @click="removeExam">删除场次</el-button>
       <span v-if="!isPublished && !allChecksOk" class="zj-muted pub__hint">预检全部通过后才能发布。</span>
       <span v-else-if="isPublished && !canUnpublish" class="zj-muted pub__hint">
         已开始、已过开放时间或已有答卷时不能撤回（当前答卷 {{ exam.attemptCount }} 份）。

@@ -505,7 +505,7 @@ function examPhase(exam: { status: 'draft' | 'published'; startsAt: number; ends
 - 出参：`LoginResultDTO`：`{ authenticated: true, name, role, landing, serverNow }`。
 - `landing` 由服务端决定（避免前端各写一套）：
   - 管理员 → `'/admin'`
-  - 考生：有开放场次且无答卷 → `'/exams/{examId}/attempt'`；有未交卷答卷 → `'/exams/{examId}/attempt'`；已交卷 → `'/attempts/{attemptId}/result'`；无考试 → `'/'`
+  - 考生 → `'/'`，前端登录成功后主动刷新考试安排，展示开始、续答或查看成绩入口，不自动建卷或跳入考试。
 - 错误：`400 INVALID_NAME`、`400 BAD_REQUEST`。
 
 **2. `GET /api/auth/session`**
@@ -527,7 +527,7 @@ function examPhase(exam: { status: 'draft' | 'published'; startsAt: number; ends
 
 **6. `POST /api/attempts/start`**
 
-- 无请求体。语义：按 design §6.1 **登录后直接开始/续答，不要求二次点击**。
+- 无请求体。考生点击「开始答题」后调用；续答或刷新已进入的答题页时可幂等调用。登录和刷新首页不调用，不创建答卷或开始计时。
 - 先结算该用户在本场的过期进行中答卷，再分支：
   - 有开放场次 + 无本人答卷 → 事务内插入 `attempts`（`status='in_progress'`，`started_at=now`，`version=1`）→ `201 { attemptId, examId, status:'in_progress', startedAt, resumed:false }`
   - 有未交卷答卷 → `200 { …, status:'in_progress', resumed:true }`（**不重置 startedAt**）
@@ -588,8 +588,8 @@ function examPhase(exam: { status: 'draft' | 'published'; startsAt: number; ends
 
 **16. `POST /api/admin/exams`**（`ExamCreateRequest`）
 
-- 缺省：`title='未命名考试'`、`instructions=''`、`answerRevealPolicy='immediate'`、`blueprint=EMPTY_BLUEPRINT`、`status='draft'`、`version=1`。
-- 时间缺省：`timeZone` 取入参（前端必须传浏览器 IANA 时区），缺省用进程时区；`startsAt` = 该时区**今天 00:00**，`endsAt` = 次日 00:00。
+- 缺省：`title` 为场次时区当天日期加「测试」（例如 `2026年10月26日 测试`）、`instructions=''`、`answerRevealPolicy='immediate'`、`blueprint=EMPTY_BLUEPRINT`、`status='draft'`、`version=1`。前端打开新建弹窗时预填名称，服务端在标题为空时也使用此规则。
+- 时间缺省：`timeZone` 默认 `Asia/Shanghai`，支持显式传入其它合法 IANA 时区；`startsAt` = 该时区**今天 00:00**，`endsAt` = 次日 00:00。只影响新场次，不重写已有场次。
 - 返回 `201 ExamAdminDTO`（`questions=[]`、`documents=[]`、`activeJob=null`、`publishChecklist` 已计算）。
 
 **17. `GET /api/admin/exams/:id`** → `ExamAdminDTO`（含 `questions`、`documents`、`activeJob`、`publishChecklist`、`serverNow`）。
@@ -719,7 +719,7 @@ function examPhase(exam: { status: 'draft' | 'published'; startsAt: number; ends
 
 | 路由文件 | URL | Layout | 数据来源 | 关键行为 |
 | --- | --- | --- | --- | --- |
-| `app/pages/index.vue` | `/` | `default` | `GET /api/auth/session` → 未登录显示姓名登录卡片；登录后按 `GET /api/exams/current` 分流 | 登录后直接用 `login.landing` 跳转；无考试时显示下一场时间与「我的记录」入口 |
+| `app/pages/index.vue` | `/` | `default` | `GET /api/auth/session` → 未登录显示姓名登录卡片；考生登录成功后主动获取 `GET /api/exams/current` | 管理员进入管理端；考生查看考试信息，自行点击开始、续答或查看成绩；请求完成前显示加载状态，无考试时显示下一场时间与「我的记录」入口 |
 | `app/pages/my-attempts.vue` | `/my-attempts` | `default` | `GET /api/me/attempts?page` | 每页 20，行点击 → 已交卷进结果页、进行中进作答页 |
 | `app/pages/exams/[examId]/attempt.vue` | `/exams/:examId/attempt` | `default` | `GET /api/attempts/:id`（id 由 `POST /api/attempts/start` 得到） | 逐题作答、自动保存、正计时、交卷确认（§10） |
 | `app/pages/attempts/[attemptId]/result.vue` | `/attempts/:attemptId/result` | `default` | `GET /api/attempts/:id/result` | 立即展示总分/用时/本人答案；`canReveal` 决定是否展示逐题解析；`after_exam` 显示公开时刻并在到时自动刷新 |
@@ -754,6 +754,7 @@ function examPhase(exam: { status: 'draft' | 'published'; startsAt: number; ends
 - 单题主视图 + 右侧/底部题号面板：当前/已答/未答三态；窄屏题号面板收进抽屉。
 - 选项单击**只选中不跳题**；切题用上一题/下一题按钮或题号；最后一题显示「交卷」。
 - 填空题每空下方标注该空分值；多选提示「可多选」；填空提示「每空最多 20 字」与「区分大小写」。
+- 填空题对外显示的题干将 `{{b1}}` 等内部标识渲染为 `_____`，作答、结果和管理端预览保持一致；保存的题干、编辑字段及答案空位 ID 保持原格式，以便绑定和判分。判断题按钮以绿色勾、红色叉分别表示正确与错误，不把 `true` / `false` 作为图标文本。
 - 交卷确认弹窗显示已答 X 题 / 未答 Y 题；允许空题交卷。
 
 ### 10.3 自动保存与计时
@@ -761,10 +762,11 @@ function examPhase(exam: { status: 'draft' | 'published'; startsAt: number; ends
 - 输入变化 600ms 防抖（`AUTOSAVE_DEBOUNCE_MS`）；保存状态三种展示：保存中 / 已保存（含时间）/ 保存失败 + 重试。
 - **串行**保存队列：同一时刻只有一个 PATCH 在飞，后续变更排队；旧响应不得覆盖新输入（用本地版本号守卫）。
 - 每次保存成功后用响应的 `version` 覆盖本地 `version`。
-- 切题前若有未完成保存，必须 `await` 队列排空再切换。
-- `409 VERSION_CONFLICT`：弹窗二选一——「用服务器版本刷新」（重新 `GET /attempts/:id`，覆盖本地）或「复制我的答案」（写入剪贴板）；**不得静默覆盖**，也不实现"用我的覆盖服务器"。
+- 切题前若有未完成保存，必须 `await` 队列排空再切换；失败或冲突须结束等待，保留最新输入，并提供重试或冲突处理入口。
+- `409 VERSION_CONFLICT`：暂停整个保存队列及后续防抖请求；弹窗提供「用服务器版本刷新」（确认后重新载入整份答卷并清理旧队列）与「复制全部未保存答案」，同时提供可手动复制的文本；**不得静默覆盖**，也不实现"用我的覆盖服务器"。
 - 交卷：先排空保存队列，再 `POST /submit` 带本地完整快照 + 最新 `version`；若返回 `409 VERSION_CONFLICT`，刷新后让用户重新确认交卷。
 - 计时：只显示已用时间 `HH:MM:SS`（`serverNow - startedAt`，`font-variant-numeric: tabular-nums`）。用「服务端时钟偏移」校准：`offset = serverNow - Date.now()`，显示 `Date.now() + offset - startedAt`。每 60 秒或 `visibilitychange` 时用一次轻量请求（`GET /api/attempts/:id`）重新同步；**不显示倒计时**。
+- 后台同步不能覆盖本地未保存答案或推进其版本；请求期间发生保存/输入时，也不能用旧响应覆盖当前状态。
 - 截止处理：本地时间到达 `endsAt` 时禁用输入并自动发起一次交卷；若服务端已结算（`EXAM_CLOSED`/`ALREADY_SUBMITTED`），直接跳结果页。
 - `beforeunload` 有未保存内容时提示；页面不承诺离线恢复。
 
@@ -773,6 +775,7 @@ function examPhase(exam: { status: 'draft' | 'published'; startsAt: number; ends
 - `canReveal=false`：展示总分（两位小数）、用时、是否及格、本人答案；逐题区域显示「答案与解析将在 {revealAt 按考试时区格式化}（{timeZone}）公开」，并在 `revealAt` 到时自动重新请求（同时监听 `visibilitychange`）。
 - `canReveal=true`：逐题展示题干、本人答案、正确答案、解析、得分（含"人工复核"标记）；未作答显示「未作答」。
 - 不出现「待批阅」等不存在状态。
+- 延迟公开的等待使用响应中的 `serverNow` 校准，重新请求间隔至少 1 秒，不能因客户端时钟偏快形成无间隔请求。
 
 ### 10.5 管理端
 
@@ -780,6 +783,7 @@ function examPhase(exam: { status: 'draft' | 'published'; startsAt: number; ends
 - 出题进度：1 秒轮询 `GET /api/admin/jobs/:id`，显示 `progressDone/progressTotal`；失败显示 `errorMessage` 与「重试」；已有活动任务时禁用「生成」与其他编辑操作。
 - 发布前必须调用 `GET /api/admin/exams/:id` 并用 `publishChecklist` 渲染预检清单；预检失败展示逐项原因。
 - 题目编辑：按题型渲染；配分只读（显示服务端算好的分值）；新增/删除/上下移动题目；保存时为整体 `PUT`，提交前本地校验基本完整性。
+- 保存其他卡片后保留未保存的题目草稿；若服务器题目也改变则阻止覆盖并提示处理冲突。选择题固定四个选项，不提供改变选项数量的控件。已有题目的草稿仍可确认后重新生成，失败保留服务器旧题目。
 - 汇总页：顶部指标卡（参与/进行中/已交卷/平均/最高/最低/及格率，无数据显示「—」，平均等注明「基于 X 份已交卷答卷」）；考生表格每页 20；逐题表现表；筛选（姓名/及格/人工复核）与「导出 Excel」按钮（导出跟随当前筛选，用 `window.location`/`fetch` 下载流）。
 - 改分弹窗：显示自动分、当前最终分；输入新分（0~满分，两位小数）与必填原因；成功后就地刷新总分与录像记录。
 
@@ -817,8 +821,8 @@ function examPhase(exam: { status: 'draft' | 'published'; startsAt: number; ends
   ```
   返回 `changes === 1` 才执行，保证单进程内不重复领取。
 - 执行前重新读取草稿与资料；若 `exam.version !== job.input_version` 则任务失败（`JOB_INPUT_STALE` 语义）。
-- 分批：按题型分组，每批请求候选数 `ceil(count*1.5)`（单题型上限 60），单批题目数 ≤`MAX_BATCH_QUESTIONS`（=6，27B 级本地模型约 25-40 秒/题，20 题的批次必然撞请求超时）；`progress_total` = 批次数，每批成功 `progress_done += 1`。
-- 单批重试：同一批次最多尝试 `BATCH_MAX_ATTEMPTS`（=2）次，仅对 `UPSTREAM_TIMEOUT`/`UPSTREAM_BAD_RESPONSE`/`QUESTION_SET_INVALID` 重试（模型输出漂移）；鉴权、限流、输入类错误不重试。引用摘录先尝试按资料原文回退修复（`repairSourceRefs`，见 §11.4），失败才计入该批错误。
+- 分批：按题型分组，候选数为 `max(count, min(ceil(count*1.5), 60))`，保证支持单一题型 61～100 题；单批题目数 ≤`MAX_BATCH_QUESTIONS`（=6）；`progress_total` = 批次数，每批成功 `progress_done += 1`。
+- 单批重试：同一批次最多尝试 `BATCH_MAX_ATTEMPTS`（=2）次，仅对 `UPSTREAM_TIMEOUT`/`UPSTREAM_BAD_RESPONSE`/`UPSTREAM_INVALID_RESPONSE`/`QUESTION_SET_INVALID` 重试（模型输出漂移）；鉴权、限流、输入类错误不重试。引用摘录先尝试按资料原文回退修复（`repairSourceRefs`，见 §11.4），失败才计入该批错误。
 - 任务时间戳一律在写入时刻取 `Date.now()`，不得复用领取任务时的时间快照（否则 `finished_at` 恒等于 `started_at`，界面耗时显示为 0）。
 - 解析只允许：去掉整段 Markdown 代码围栏（` ```json … ``` `）后 `JSON.parse`；禁止 eval、禁止从文本中截取 `{...}`、禁止补默认字段。缺字段/多字段/类型不符一律视为该批失败。
 - 服务端生成：题目/选项/空位 ID、`position`、`max_score_units`；把模型输出的临时空位编号（`{{1}}`、`[1]`、`__1__`）统一映射为 `b1..bn`，并同步替换题干与 `acceptedAnswers` 中的引用。
@@ -887,8 +891,8 @@ function examPhase(exam: { status: 'draft' | 'published'; startsAt: number; ends
 - 上游忽略 `stream:true` 直接回整段 JSON 时，一次性回调整段文本，行为与流式一致；流中途断开按上游异常处理，已收到的片段不丢。
 - 落库：`jobs.output_text` 只保留最近 `JOB_OUTPUT_MAX_CHARS`（=60000）字符（`substr(…, -N)`），`jobs.output_chars` 记录累计写入字符数（单调递增），二者共同得出"被截断的前缀长度"。
 - 节流：内存累积后按 400ms 或 2000 字符批量 UPDATE；任务结束/失败的 `finally` 必须 `flush()`，否则最后一段丢失。写库失败只 `console.warn`，**不得**因此中断出题任务。
-- 读取：`GET /api/admin/jobs/:id/output?offset=N`（仅管理员，§5.3）返回 `JobOutputDTO`；单次最多返回 `JOB_OUTPUT_CHUNK_CHARS`（=20000）字符，offset 越界回落到实际长度，客户端据此不卡死。轮询 `JOB_OUTPUT_POLL_INTERVAL_MS`（=800）。`output_text` **不进入** `JOB_COLUMNS`，任务状态接口不背大文本。
-- 重跑同一任务（`POST /api/admin/jobs/:id/retry`）时清空 `output_text`/`output_chars`，避免新旧输出混在一起。
+- 读取：`GET /api/admin/jobs/:id/output?offset=N&runId=R`（仅管理员，runId 可省略）返回 `JobOutputDTO`；单次最多 20000 个 Unicode 字符。offset 是相对于累计输出的绝对游标，不随保留窗口截断而停止增长；过旧游标跳到最早保留位置，超前游标回落到累计长度。新增可选响应字段 `runId` 标识当前执行轮次、`startOffset` 标识实际片段起点。客户端原样回传 runId，并丢弃已被截断的本地前缀。轮询间隔仍为 800ms，`output_text` 不进入状态接口。
+- 重跑同一任务时清空输出并更换 runId（由任务创建/开始时间构成）；旧轮次游标从当前保留起点重新读取，客户端清空旧轮次内容，避免新旧混合。
 - **思考强度**：`provider_settings.thinking_level` ∈ `off|low|medium|high`（默认 `off`），随 `SettingsDTO.thinkingLevel` 读写，`SettingsUpdateRequest.thinkingLevel` 省略即不改。
   - `off`：只发 `chat_template_kwargs: { enable_thinking: false }`（明确关闭思考）。
   - 其它：发 `reasoning_effort: <level>` + `chat_template_kwargs: { enable_thinking: true }`（vLLM/Qwen 系认后者，OpenAI 系认前者）。
@@ -918,7 +922,7 @@ function examPhase(exam: { status: 'draft' | 'published'; startsAt: number; ends
 | 3 | API Key 回传 | 后端 | 任何响应不含 `apiKey`，只有 `hasApiKey` |
 | 4 | Base URL 前缀 | 后端 | 保留用户给定路径，只规范化末尾 `/`，不补 `/v1` |
 | 5 | 文件解析失败 | 后端+前端 | 具体原因可读，且不占用资料配额 |
-| 6 | 抽题数量 | 后端 | 各题型候选 `ceil(N*1.5)`（≤60），最终题数等于设定 |
+| 6 | 抽题数量 | 后端 | 各题型候选 `max(N, min(ceil(N*1.5), 60))`，最终题数等于设定 |
 | 7 | 1/3/30/100 题配分 | 后端 | 合计恒为 10000 |
 | 8 | 并发发布 | 后端 | 一方成功、另一方 409，不产生重叠场次 |
 | 9 | 开始前创建答卷 | 后端 | `409 EXAM_NOT_OPEN` |
@@ -951,6 +955,8 @@ function examPhase(exam: { status: 'draft' | 'published'; startsAt: number; ends
 
 | 日期 | 提出方 | 变更点 | 影响面 |
 | --- | --- | --- | --- |
+| 2026-10-26 | 用户 | 登录后刷新考试安排，取消登录和首页刷新自动开考，改为点击开始后建卷计时；判断题用绿色勾/红色叉，填空题题面用下划线；新场次默认名称为当天日期加「测试」，默认时区 Asia/Shanghai | 姓名入口、题目显示、新建场次前后端默认值；不迁移已有考试或答案 |
+| 2026-10-26 | 用户授权修复 | 修复审查的 14 项：保存队列暂停/失败收尾与后台同步隔离、100 题候选数量、生成编辑锁与重新生成、题型编辑/固定四选项、输出累计游标和轮次、模型错误码重试、服务端公开计时、人工分统计、题目草稿保留及上传事务内校验；删除场次时保留资料库拥有的旧路径原件。JobOutputDTO 追加 runId/startOffset，可选查询 runId | 答题、场次编辑、出题任务、资料与统计；不新增依赖或修改数据库结构 |
 | 2026-10-23 | 架构（骨架初始化） | 冻结 v1.0 基线：目录归属、33 个接口、共享类型、错误码表、配分与判分算法、事务与任务约定 | 全部 |
 | 2026-10-23 | 用户 | 模型配置改为「API Key 可选」：只校验 `baseUrl` + `modelId`，空 Key 不发送 `Authorization` 头；刷新模型只需 `baseUrl` | `server/ai/client.ts`、`server/services/{settings,generation}.ts`、`app/pages/admin/settings.vue`、`app/components/admin/BlueprintCard.vue` |
 | 2026-10-23 | 用户 | **出题任务可靠性修复（排查「卡在 0/4 批」后）**：① `MODEL_REQUEST_TIMEOUT_MS` 120s→300s、`MAX_BATCH_QUESTIONS` 20→6（27B 本地模型单批大会撞超时）；② 单批最多重试 2 次（仅超时/格式漂移/引用校验类错误），引用摘录先按原文回退修复再校验；③ 任务时间戳改为写入时刻取 `Date.now()`，修掉 `finished_at === started_at`；④ `ExamAdminDTO` 新增 `latestJob`，任务失败/中断后界面不再"消失"，且失败时展示错误码与原因 | `shared/constants.ts`、`shared/types/exam.ts`、`server/services/{generation,exams,documents}.ts`、`server/tasks/generation-worker.ts`、`app/components/admin/BlueprintCard.vue` |

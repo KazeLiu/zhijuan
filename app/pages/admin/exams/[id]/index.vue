@@ -87,10 +87,10 @@ function reload(): void {
         <el-alert type="info" :closable="false" show-icon title="出题任务进行中，可在下方「题数与难度」卡片查看实时进度。" />
       </div>
 
-      <AdminBasicsCard :exam="exam" :locked="locked" @changed="reload" />
-      <AdminDocumentsCard :exam="exam" :locked="locked" @changed="reload" />
+      <AdminBasicsCard :exam="exam" :locked="locked || jobActive" @changed="reload" />
+      <AdminDocumentsCard :exam="exam" :locked="locked || jobActive" @changed="reload" />
       <AdminBlueprintCard :exam="exam" :model-ready="modelReady" :locked="locked" @changed="reload" />
-      <AdminQuestionsCard :exam="exam" :locked="locked" @changed="reload" />
+      <AdminQuestionsCard :exam="exam" :locked="locked || jobActive" @changed="reload" />
       <AdminPublishCard :exam="exam" @changed="reload" />
     </template>
   </section>

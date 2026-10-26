@@ -5,6 +5,7 @@
  */
 import type { CandidateAnswer, CandidateQuestion } from '#shared/types'
 import { MAX_BLANK_ANSWER_CHARS } from '#shared/constants'
+import { Check, Close } from '@element-plus/icons-vue'
 
 interface Props {
   question: CandidateQuestion
@@ -81,7 +82,7 @@ function updateBlank(blankId: string, next: string): void {
       </div>
     </header>
 
-    <h2 class="q-card__stem">{{ question.stem }}</h2>
+    <h2 class="q-card__stem">{{ formatQuestionStem(question.stem, question.type) }}</h2>
 
     <div v-if="question.type === 'fill_blank'" class="q-card__blanks">
       <div v-for="(blank, blankIndex) in question.blanks" :key="blank.id" class="q-blank">
@@ -115,7 +116,16 @@ function updateBlank(blankId: string, next: string): void {
           :disabled="disabled"
           @click="toggleOption(option.id)"
         >
-          <span class="q-option__mark">{{ option.id }}</span>
+          <span
+            v-if="question.type === 'true_false'"
+            class="q-option__mark q-option__mark--judgment"
+            :class="{ 'q-option__mark--false': option.id === 'false' }"
+            aria-hidden="true"
+          >
+            <Check v-if="option.id === 'true'" />
+            <Close v-else />
+          </span>
+          <span v-else class="q-option__mark">{{ option.id }}</span>
           <span class="q-option__text">{{ option.text }}</span>
         </button>
       </li>
@@ -225,6 +235,21 @@ function updateBlank(blankId: string, next: string): void {
   flex: 1;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.q-option__mark--judgment {
+  border: none;
+}
+
+.q-option__mark--judgment svg {
+  width: 24px;
+  height: 24px;
+  stroke: currentColor;
+  stroke-width: 1;
+}
+
+.q-option__mark--false {
+  color: var(--zj-danger);
 }
 
 .q-card__blanks {

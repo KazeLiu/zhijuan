@@ -13,7 +13,7 @@ export const PASS_SCORE_UNITS = 6000
 export const MIN_QUESTIONS = 1
 export const MAX_QUESTIONS = 100
 
-/** 候选题倍数与单题型候选上限（出题请求） */
+/** 候选题倍数与扩充上限；目标题数超过上限时，仍至少生成目标题数。 */
 export const CANDIDATE_FACTOR = 1.5
 export const MAX_CANDIDATES_PER_TYPE = 60
 
@@ -49,6 +49,9 @@ export const DEFAULT_PAGE_SIZE = 20
 
 /** 会话有效期（天）——与 runtimeConfig.sessionTtlDays 默认值一致 */
 export const DEFAULT_SESSION_TTL_DAYS = 7
+
+/** 新建场次默认使用中国标准时间。 */
+export const DEFAULT_EXAM_TIME_ZONE = 'Asia/Shanghai'
 
 /** 前端交互参数：自动保存防抖、任务轮询、模型请求超时 */
 export const AUTOSAVE_DEBOUNCE_MS = 600

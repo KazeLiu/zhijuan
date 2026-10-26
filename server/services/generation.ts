@@ -58,7 +58,7 @@ export interface GenerationPlan {
   totalBatches: number
 }
 
-/** 按 §11.2 分批：候选数 ceil(N*1.5)（≤60），单批 ≤20 */
+/** 按 §11.2 分批：扩充候选至多 60 题，但不少于目标题数；单批数量受常量限制。 */
 export function planGeneration(blueprint: BlueprintDTO): GenerationPlan {
   const counts: Record<QuestionType, number> = {
     single_choice: blueprint.singleChoice,
@@ -70,7 +70,7 @@ export function planGeneration(blueprint: BlueprintDTO): GenerationPlan {
   for (const type of TYPE_ORDER) {
     const need = counts[type]
     if (need <= 0) continue
-    const candidates = Math.min(Math.max(need, Math.ceil(need * CANDIDATE_FACTOR)), MAX_CANDIDATES_PER_TYPE)
+    const candidates = Math.max(need, Math.min(Math.ceil(need * CANDIDATE_FACTOR), MAX_CANDIDATES_PER_TYPE))
     let remaining = candidates
     while (remaining > 0) {
       const size = Math.min(MAX_BATCH_QUESTIONS, remaining)
@@ -157,7 +157,7 @@ function shuffle<T>(items: T[]): T[] {
 /** 单批最多尝试次数：模型输出不稳定（超时/格式漂移/引用改写）时重试一次 */
 const BATCH_MAX_ATTEMPTS = 2
 
-const RETRYABLE_BATCH_CODES = new Set<string>(['UPSTREAM_TIMEOUT', 'UPSTREAM_BAD_RESPONSE', 'QUESTION_SET_INVALID'])
+const RETRYABLE_BATCH_CODES = new Set<string>(['UPSTREAM_TIMEOUT', 'UPSTREAM_BAD_RESPONSE', 'UPSTREAM_INVALID_RESPONSE', 'QUESTION_SET_INVALID'])
 
 function isRetryableBatchError(error: unknown): boolean {
   return error instanceof ApiFailure && RETRYABLE_BATCH_CODES.has(error.code)

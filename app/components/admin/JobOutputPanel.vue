@@ -27,6 +27,8 @@ const DRAIN_MAX_ROUNDS = 20
 
 const text = ref('')
 const offset = ref(0)
+const runId = ref<string | undefined>()
+let bufferStart = 0
 const total = ref(0)
 const truncatedCount = ref(0)
 const done = ref(false)
@@ -66,6 +68,8 @@ function reset(): void {
   clearTimer()
   text.value = ''
   offset.value = 0
+  runId.value = undefined
+  bufferStart = 0
   total.value = 0
   truncatedCount.value = 0
   done.value = false
@@ -84,11 +88,20 @@ function pull(): Promise<boolean> {
   inflight = (async (): Promise<boolean> => {
     try {
       const chunk = await apiFetch<JobOutputDTO>(`/api/admin/jobs/${jobId}/output`, {
-        query: { offset: requestedOffset },
+        query: { offset: requestedOffset, runId: runId.value },
         silent: true,
       })
       // 期间切换了任务或组件已卸载：丢弃旧响应，避免串台
       if (disposed || jobId !== props.jobId) return false
+      const start = chunk.startOffset ?? requestedOffset
+      if (chunk.runId !== runId.value || start > offset.value) {
+        text.value = ''
+        bufferStart = start
+      } else if (chunk.truncated > bufferStart) {
+        text.value = Array.from(text.value).slice(chunk.truncated - bufferStart).join('')
+        bufferStart = chunk.truncated
+      }
+      runId.value = chunk.runId
       const grew = chunk.text.length > 0
       if (grew) text.value += chunk.text
       offset.value = chunk.offset
@@ -136,8 +149,7 @@ async function pollOnce(): Promise<void> {
   }
   await pull()
   if (disposed || !props.jobId || !props.active) return
-  // 服务端已标记结束：不再轮询，等父组件把 active 转 false 后走一次收尾
-  if (done.value) return
+  // 以父组件的任务状态决定轮询，避免同 ID 重试时旧响应提前结束新一轮拉取。
   scheduleNext()
 }
 

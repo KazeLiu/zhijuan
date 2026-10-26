@@ -13,6 +13,7 @@ const errorMessage = ref('')
 const inputRef = ref<{ focus: () => void } | null>(null)
 
 async function handleSubmit(): Promise<void> {
+  if (submitting.value) return
   const trimmed = name.value.trim()
   if (!trimmed) {
     errorMessage.value = '请输入姓名'
@@ -39,7 +40,7 @@ onMounted(() => {
   <el-card shadow="never" class="login-card">
     <template #header>
       <div class="login-card__header">
-        <span>输入姓名开始</span>
+        <span>输入姓名进入</span>
         <el-tag type="success" effect="plain" size="small">姓名即身份</el-tag>
       </div>
     </template>
@@ -58,7 +59,6 @@ onMounted(() => {
           placeholder="请输入你的姓名"
           autocomplete="off"
           clearable
-          @keyup.enter="handleSubmit"
         />
       </el-form-item>
 
@@ -77,7 +77,6 @@ onMounted(() => {
         class="login-card__submit"
         :loading="submitting"
         native-type="submit"
-        @click="handleSubmit"
       >
         进入
       </el-button>

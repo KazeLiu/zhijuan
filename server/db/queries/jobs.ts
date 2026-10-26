@@ -240,6 +240,8 @@ export interface JobOutputSlice {
   total: number
   /** 超出保留上限被丢弃的前缀字符数 */
   truncated: number
+  runId: string
+  startOffset: number
 }
 
 /**
@@ -259,27 +261,33 @@ export function appendJobOutput(db: DatabaseSync, jobId: string, chunk: string):
 }
 
 /** 按 offset 增量读取模型原始输出：单次最多 JOB_OUTPUT_CHUNK_CHARS 字符（§11.8） */
-export function readJobOutput(db: DatabaseSync, jobId: string, fromOffset: number): JobOutputSlice | undefined {
+export function readJobOutput(db: DatabaseSync, jobId: string, fromOffset: number, requestedRunId?: string): JobOutputSlice | undefined {
   const safeOffset = Number.isFinite(fromOffset) && fromOffset > 0 ? Math.floor(fromOffset) : 0
   const row = db
     .prepare(
-      `SELECT substr(COALESCE(output_text, ''), ?, ?) AS chunk,
-              length(COALESCE(output_text, '')) AS total,
-              output_chars AS written
+      `SELECT length(COALESCE(output_text, '')) AS total,
+              output_chars AS written, created_at, started_at
        FROM jobs WHERE id = ?`,
     )
-    .get(safeOffset + 1, JOB_OUTPUT_CHUNK_CHARS, jobId) as
-    | { chunk: string; total: number; written: number }
+    .get(jobId) as
+    | { total: number; written: number; created_at: number; started_at: number | null }
     | undefined
   if (!row) return undefined
   const total = Number(row.total)
   const written = Number(row.written)
+  const truncated = Math.max(0, written - total)
+  const runId = `${row.created_at}:${row.started_at ?? 'queued'}`
+  const reset = requestedRunId !== undefined && requestedRunId !== runId
+  const startOffset = reset ? truncated : Math.min(written, Math.max(truncated, safeOffset))
+  const chunk = db.prepare("SELECT substr(COALESCE(output_text, ''), ?, ?) AS text FROM jobs WHERE id = ?")
+    .get(startOffset - truncated + 1, JOB_OUTPUT_CHUNK_CHARS, jobId) as { text: string }
   return {
-    text: row.chunk,
-    // 越界时 offset 回落到 total，客户端不会因为 offset 超长而卡住
-    offset: Math.min(safeOffset + JOB_OUTPUT_CHUNK_CHARS, total),
+    text: chunk.text,
+    offset: startOffset + Array.from(chunk.text).length,
     total,
-    truncated: Math.max(0, written - total),
+    truncated,
+    runId,
+    startOffset,
   }
 }
 

@@ -3,8 +3,6 @@ import type { DatabaseSync } from 'node:sqlite'
 import type { H3Event } from 'h3'
 import { DEFAULT_SESSION_TTL_DAYS, MAX_NAME_LENGTH } from '../../shared/constants'
 import type { Role } from '../../shared/types/common'
-import { findAttemptByName } from '../db/queries/attempts'
-import { findLatestClosedExam, findOpenExam } from '../db/queries/exams'
 import { ApiFailure } from '../utils/respond'
 
 /** 已认证的会话（role 每次请求实时计算，不入库） */
@@ -168,23 +166,7 @@ export function requireAdmin(event: H3Event, now: number): SessionInfo {
   return session
 }
 
-/**
- * 登录后落地页（§8.2）：管理员 → /admin；考生按开放场次与本人答卷决定。
- * 无开放场次时回落到最近结束场次的成绩页，再退回首页。
- */
-export function landingFor(db: DatabaseSync, name: string, role: Role, now: number): string {
-  if (role === 'admin') return '/admin'
-  const openExam = findOpenExam(db, now)
-  if (openExam) {
-    const attempt = findAttemptByName(db, openExam.id, name)
-    if (!attempt) return `/exams/${openExam.id}/attempt`
-    if (attempt.status === 'submitted') return `/attempts/${attempt.id}/result`
-    return `/exams/${openExam.id}/attempt`
-  }
-  const closedExam = findLatestClosedExam(db, now)
-  if (closedExam) {
-    const attempt = findAttemptByName(db, closedExam.id, name)
-    if (attempt?.status === 'submitted') return `/attempts/${attempt.id}/result`
-  }
-  return '/'
+/** 登录后管理员进入管理端，考生留在首页自主选择开始、续答或查看成绩。 */
+export function landingFor(role: Role): string {
+  return role === 'admin' ? '/admin' : '/'
 }

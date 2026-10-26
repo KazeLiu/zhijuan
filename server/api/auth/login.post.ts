@@ -18,7 +18,7 @@ export default defineEventHandler(async (event) => {
       authenticated: true,
       name,
       role,
-      landing: landingFor(db, name, role, now),
+      landing: landingFor(role),
       serverNow: now,
     }
     return ok(event, payload)

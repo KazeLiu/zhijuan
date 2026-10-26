@@ -28,17 +28,24 @@ export default defineEventHandler((event) => {
     const now = Date.now()
     requireAdmin(event, now)
     const jobId = readParam(event, 'id')
-    const offset = readOffset(getQuery(event).offset)
+    const query = getQuery(event)
+    const offset = readOffset(query.offset)
+    const runId = Array.isArray(query.runId) ? query.runId[0] : query.runId
+    if (runId !== undefined && (typeof runId !== 'string' || runId.length > 100)) {
+      throw new ApiFailure('VALIDATION_FAILED', 'runId 格式不正确')
+    }
     const db = useDb()
     const job = findJob(db, jobId)
     if (!job) throw new ApiFailure('NOT_FOUND', '出题任务不存在')
-    const slice = readJobOutput(db, jobId, offset)
+    const slice = readJobOutput(db, jobId, offset, runId)
     const payload: JobOutputDTO = {
       text: slice?.text ?? '',
       offset: slice?.offset ?? offset,
       total: slice?.total ?? 0,
       done: job.status === 'succeeded' || job.status === 'failed',
       truncated: slice?.truncated ?? 0,
+      runId: slice?.runId,
+      startOffset: slice?.startOffset,
     }
     return ok(event, payload)
   } catch (error) {

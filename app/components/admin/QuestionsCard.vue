@@ -49,8 +49,11 @@ interface DraftQuestion {
 const drafts = ref<DraftQuestion[]>([])
 const originalSignature = ref('')
 const saving = ref(false)
+const dialogOpen = ref(false)
 const saveError = ref('')
 const fieldErrors = ref<Record<string, string>>({})
+const baseVersion = ref(props.exam.version)
+const serverConflict = ref(false)
 
 function toDraft(question: QuestionAdminDTO): DraftQuestion {
   return {
@@ -72,12 +75,13 @@ function toDraft(question: QuestionAdminDTO): DraftQuestion {
   }
 }
 
-function syncFromExam(): void {
-  drafts.value = props.exam.questions.map(toDraft)
+function syncFromExam(exam: ExamAdminDTO = props.exam): void {
+  drafts.value = exam.questions.map(toDraft)
   originalSignature.value = signatureOf(drafts.value)
+  baseVersion.value = exam.version
+  serverConflict.value = false
+  saveError.value = ''
 }
-
-watch(() => props.exam.version, syncFromExam, { immediate: true })
 
 function signatureOf(list: DraftQuestion[]): string {
   return JSON.stringify(
@@ -94,9 +98,19 @@ function signatureOf(list: DraftQuestion[]): string {
 }
 
 const dirty = computed(() => signatureOf(drafts.value) !== originalSignature.value)
+watch(() => props.exam.version, (version, previousVersion) => {
+  if (previousVersion === undefined || (!dirty.value && !dialogOpen.value)) {
+    syncFromExam()
+  } else if (signatureOf(props.exam.questions.map(toDraft)) !== originalSignature.value) {
+    serverConflict.value = true
+    saveError.value = '服务器题目已发生变化，本地修改已保留。请先复制需要的内容，再放弃修改以载入服务器题目。'
+  } else {
+    // 其他卡片只改了场次信息，题目草稿继续保留。
+    baseVersion.value = version
+  }
+}, { immediate: true })
 const documents = computed<DocumentDTO[]>(() => props.exam.documents.filter((doc) => doc.status === 'parsed'))
 
-const dialogOpen = ref(false)
 const editingIndex = ref(-1)
 const dialogError = ref('')
 const dialogFieldErrors = ref<Record<string, string>>({})
@@ -131,6 +145,7 @@ function newBlank(index: number): BlankDefinition {
 }
 
 function handleTypeChange(type: QuestionType): void {
+  form.type = type
   form.options = buildOptions(type)
   resetAnswerForType(type)
 }
@@ -176,25 +191,6 @@ function openEdit(index: number): void {
 
 function newSourceRef(): SourceRef {
   return { documentId: documents.value[0]?.id ?? '', locator: '', quote: '' }
-}
-
-function addOption(): void {
-  if (form.type !== 'multiple_choice') return
-  const nextId = String.fromCharCode(65 + form.options.length)
-  form.options.push({ id: nextId, text: '' })
-}
-
-function removeOption(index: number): void {
-  if (form.type !== 'multiple_choice' || form.options.length <= 3) return
-  const removed = form.options[index]
-  form.options.splice(index, 1)
-  form.options.forEach((option, position) => {
-    option.id = String.fromCharCode(65 + position)
-  })
-  if (removed) {
-    const removedId = String.fromCharCode(65 + index)
-    form.answerDefinition.correctOptionIds = form.answerDefinition.correctOptionIds.filter((id) => id !== removedId)
-  }
 }
 
 function addBlank(): void {
@@ -359,7 +355,7 @@ async function removeQuestion(index: number): Promise<void> {
 }
 
 async function discardChanges(): Promise<void> {
-  if (!dirty.value) return
+  if (!dirty.value && !serverConflict.value) return
   try {
     await ElMessageBox.confirm('放弃本次未保存的题目修改？', '放弃修改', {
       type: 'warning',
@@ -373,12 +369,13 @@ async function discardChanges(): Promise<void> {
 }
 
 async function save(): Promise<void> {
+  if (serverConflict.value || props.locked) return
   saving.value = true
   saveError.value = ''
   fieldErrors.value = {}
   try {
     const payload = {
-      expectedVersion: props.exam.version,
+      expectedVersion: baseVersion.value,
       questions: drafts.value.map<QuestionDraftInput>((item) => ({
         ...(item.id ? { id: item.id } : {}),
         type: item.type,
@@ -389,11 +386,12 @@ async function save(): Promise<void> {
         sourceRefs: item.sourceRefs,
       })),
     }
-    await apiFetch<ExamAdminDTO>(`/api/admin/exams/${props.exam.id}/questions`, {
+    const updated = await apiFetch<ExamAdminDTO>(`/api/admin/exams/${props.exam.id}/questions`, {
       method: 'PUT',
       body: payload,
       silent: true,
     })
+    syncFromExam(updated)
     ElMessage.success('题目已保存，分值已按整卷 100 分重新分配')
     emit('changed')
   } catch (error) {
@@ -438,9 +436,9 @@ function answerSummary(question: DraftQuestion): string {
           <span class="zj-muted qs__meta">共 {{ drafts.length }} 题 · 配分由服务端按整卷 100 分自动分配（只读）</span>
         </div>
         <div class="qs__actions">
-          <el-button type="primary" :disabled="locked || !!exam.activeJob" @click="openCreate">新增题目</el-button>
-          <el-button :disabled="!dirty || saving" @click="discardChanges">放弃修改</el-button>
-          <el-button type="primary" plain :loading="saving" :disabled="locked || !dirty" @click="save">
+          <el-button type="primary" :disabled="locked || saving || !!exam.activeJob" @click="openCreate">新增题目</el-button>
+          <el-button :disabled="(!dirty && !serverConflict) || saving" @click="discardChanges">放弃修改</el-button>
+          <el-button type="primary" plain :loading="saving" :disabled="locked || !dirty || serverConflict" @click="save">
             保存全部题目
           </el-button>
         </div>
@@ -453,7 +451,7 @@ function answerSummary(question: DraftQuestion): string {
       :closable="false"
       show-icon
       class="qs__alert"
-      title="场次已发布或已有答卷，题目只读。"
+      title="场次已发布、已有答卷或正在出题，题目暂不可修改。"
     />
     <el-alert
       v-if="exam.activeJob && isJobActive(exam.activeJob.status)"
@@ -487,14 +485,14 @@ function answerSummary(question: DraftQuestion): string {
               满分 {{ question.maxScoreUnits ? formatScoreUnits(question.maxScoreUnits) : '保存后分配' }}
             </span>
           </div>
-          <p class="qs__stem">{{ question.stem }}</p>
+          <p class="qs__stem">{{ formatQuestionStem(question.stem, question.type) }}</p>
           <p class="zj-muted qs__answer">答案：{{ answerSummary(question) }}</p>
         </div>
         <div class="qs__item-actions">
-          <el-button text type="primary" :disabled="locked" @click="openEdit(index)">编辑</el-button>
-          <el-button text :disabled="locked || index === 0" @click="moveUp(index)">上移</el-button>
-          <el-button text :disabled="locked || index === drafts.length - 1" @click="moveDown(index)">下移</el-button>
-          <el-button text type="danger" :disabled="locked" @click="removeQuestion(index)">删除</el-button>
+          <el-button text type="primary" :disabled="locked || saving" @click="openEdit(index)">编辑</el-button>
+          <el-button text :disabled="locked || saving || index === 0" @click="moveUp(index)">上移</el-button>
+          <el-button text :disabled="locked || saving || index === drafts.length - 1" @click="moveDown(index)">下移</el-button>
+          <el-button text type="danger" :disabled="locked || saving" @click="removeQuestion(index)">删除</el-button>
         </div>
       </li>
     </ol>
@@ -529,7 +527,7 @@ function answerSummary(question: DraftQuestion): string {
             :error="dialogFieldErrors.options || dialogFieldErrors.correct"
           >
             <div class="qs__options">
-              <div v-for="(option, optionIndex) in form.options" :key="option.id" class="qs__option">
+              <div v-for="option in form.options" :key="option.id" class="qs__option">
                 <el-checkbox
                   v-if="form.type === 'multiple_choice'"
                   :model-value="isCorrect(option.id)"
@@ -550,19 +548,7 @@ function answerSummary(question: DraftQuestion): string {
                   :disabled="form.type === 'true_false'"
                   class="qs__option-input"
                 />
-                <el-button
-                  v-if="form.type === 'multiple_choice'"
-                  text
-                  type="danger"
-                  :disabled="form.options.length <= 3"
-                  @click="removeOption(optionIndex)"
-                >
-                  删除
-                </el-button>
               </div>
-              <el-button v-if="form.type === 'multiple_choice'" text type="primary" @click="addOption">
-                添加选项
-              </el-button>
             </div>
           </el-form-item>
         </template>

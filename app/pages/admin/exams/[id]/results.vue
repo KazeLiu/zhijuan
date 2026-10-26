@@ -298,7 +298,7 @@ const query = computed<ResultsQuery>(() => ({
           </el-table-column>
           <el-table-column label="题干" min-width="240">
             <template #default="{ row }">
-              <span class="results__stem">{{ row.stem }}</span>
+              <span class="results__stem">{{ formatQuestionStem(row.stem, row.type) }}</span>
             </template>
           </el-table-column>
           <el-table-column label="满分" width="80" align="right">

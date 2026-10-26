@@ -35,6 +35,7 @@ const clock = useServerClock()
 const questions = computed(() => attempt.value?.questions ?? [])
 const total = computed(() => questions.value.length)
 const currentQuestion = computed(() => questions.value[currentIndex.value] ?? null)
+const conflictQuestion = computed(() => questions.value.find((item) => item.id === autosave.conflict.value?.questionId))
 const currentAnswer = computed<CandidateAnswer | null>(() => {
   const question = currentQuestion.value
   if (!question) return null
@@ -90,7 +91,7 @@ async function bootstrap(): Promise<void> {
   loading.value = true
   loadError.value = ''
   try {
-    // 契约 §8.3：无请求体；服务端按「登录后直接开始/续答」分支
+    // 显式进入答题页后创建或续用答卷；刷新时沿用原开始时间。
     const started = await apiFetch<AttemptStartResult>('/api/attempts/start', {
       method: 'POST',
       silent: true,
@@ -126,17 +127,22 @@ async function bootstrap(): Promise<void> {
   }
 }
 
-async function reloadDetail(silent = true): Promise<void> {
+async function reloadDetail(silent = true, replaceAnswers = false): Promise<void> {
   const attemptId = attempt.value?.attemptId
   if (!attemptId) return
   resyncing.value = true
+  const requestedVersion = autosave.version.value
+  const hadPending = autosave.hasPending()
   try {
     const detail = await apiFetch<AttemptDetailDTO>(`/api/attempts/${attemptId}`, { silent })
     if (detail.status === 'submitted') {
       await goResult(detail.attemptId)
       return
     }
-    applyDetail(detail)
+    clock.sync(detail.serverNow)
+    if (replaceAnswers || (!hadPending && !autosave.hasPending() && requestedVersion === autosave.version.value)) {
+      applyDetail(detail)
+    }
   } catch (error) {
     if (!silent) ElMessage.error(describeApiError(error, '刷新答卷失败'))
   } finally {
@@ -151,12 +157,18 @@ function handleAnswerChange(questionId: string, answer: CandidateAnswer): void {
 }
 
 async function goTo(index: number): Promise<void> {
-  if (index < 0 || index >= total.value) return
+  const attemptId = attempt.value?.attemptId
+  if (!attemptId || index < 0 || index >= total.value) return
   if (switching.value) return
   if (autosave.hasPending()) {
     switching.value = true
     try {
       await autosave.flushNow()
+    } catch (error) {
+      if (error instanceof ApiClientError && (error.code === 'EXAM_CLOSED' || error.code === 'ALREADY_SUBMITTED')) {
+        await goResult(attemptId)
+      }
+      return
     } finally {
       switching.value = false
     }
@@ -166,18 +178,28 @@ async function goTo(index: number): Promise<void> {
 }
 
 async function handleConflictUseServer(): Promise<void> {
-  autosave.resolveConflict('server')
-  await reloadDetail()
-  ElMessage.success('已用服务器最新版本刷新')
+  const current = autosave.conflict.value
+  const attemptId = attempt.value?.attemptId
+  if (!current || !attemptId) return
+  try {
+    const detail = await apiFetch<AttemptDetailDTO>(`/api/attempts/${attemptId}`, { silent: true })
+    if (detail.status === 'submitted') {
+      await goResult(attemptId)
+      return
+    }
+    applyDetail(detail)
+    autosave.resolveConflict('server', detail.version)
+    conflictCopied.value = false
+    ElMessage.success('已载入服务器最新答卷')
+  } catch (error) {
+    ElMessage.error(describeApiError(error, '刷新失败，请重试'))
+  }
 }
 
 async function handleConflictCopy(): Promise<void> {
   const conflict = autosave.conflict.value
   if (!conflict) return
-  const question = questions.value.find((item) => item.id === conflict.questionId)
-  const text = question
-    ? describeAnswer(question, conflict.localAnswer)
-    : JSON.stringify(conflict.localAnswer)
+  const text = conflictDraftText.value
   try {
     await navigator.clipboard.writeText(text)
     conflictCopied.value = true
@@ -186,6 +208,15 @@ async function handleConflictCopy(): Promise<void> {
     ElMessage.error('复制失败，请手动记录答案后再刷新')
   }
 }
+
+const conflictDraftText = computed(() => {
+  const localAnswers = answers.value
+  if (!autosave.conflict.value) return ''
+  return autosave.pendingQuestionIds().map((id) => {
+    const question = questions.value.find((item) => item.id === id)
+    return question ? `第 ${question.position} 题：${describeAnswer(question, localAnswers[id] ?? null)}` : ''
+  }).filter(Boolean).join('\n')
+})
 
 async function submit(reason: 'manual' | 'deadline'): Promise<void> {
   if (submitting.value) return
@@ -209,12 +240,13 @@ async function submit(reason: 'manual' | 'deadline'): Promise<void> {
     await goResult(attemptId)
   } catch (error) {
     const apiError = error instanceof ApiClientError ? error : null
-    if (apiError?.code === 'VERSION_CONFLICT' || apiError?.code === 'ALREADY_SUBMITTED') {
+    if (apiError?.code === 'VERSION_CONFLICT') {
+      if (autosave.conflict.value) return
       ElMessage.warning('答卷已被更新，正在刷新后重新确认交卷')
-      await reloadDetail()
+      await reloadDetail(false, true)
       return
     }
-    if (apiError?.code === 'EXAM_CLOSED') {
+    if (apiError?.code === 'EXAM_CLOSED' || apiError?.code === 'ALREADY_SUBMITTED') {
       ElMessage.warning('考试已截止，服务端已按最后保存的答案结算')
       await goResult(attemptId)
       return
@@ -451,12 +483,12 @@ onBeforeUnmount(() => {
       width="min(520px, 92vw)"
     >
       <p class="attempt__conflict-text">
-        这道题的版本与服务器不一致（可能在其他窗口已作答）。为避免覆盖，系统没有自动保存本次修改。
+        答卷版本与服务器不一致，保存已暂停。刷新将采用服务器整份答卷并放弃本地未保存内容，请先复制下面的输入。
       </p>
       <el-descriptions v-if="autosave.conflict.value" :column="1" border size="small">
         <el-descriptions-item label="题目">
           {{
-            questions.find((item) => item.id === autosave.conflict.value?.questionId)?.stem?.slice(0, 60) || '—'
+            conflictQuestion ? formatQuestionStem(conflictQuestion.stem, conflictQuestion.type).slice(0, 60) : '—'
           }}
         </el-descriptions-item>
         <el-descriptions-item label="服务器上的答案">
@@ -476,9 +508,10 @@ onBeforeUnmount(() => {
           }}
         </el-descriptions-item>
       </el-descriptions>
+      <el-input :model-value="conflictDraftText" type="textarea" :rows="4" readonly aria-label="本地未保存答案，可手动复制" />
       <template #footer>
         <el-button @click="handleConflictCopy">
-          {{ conflictCopied ? '已复制我的答案' : '复制我的答案' }}
+          {{ conflictCopied ? '已复制未保存答案' : '复制全部未保存答案' }}
         </el-button>
         <el-button type="primary" @click="handleConflictUseServer">用服务器版本刷新</el-button>
       </template>

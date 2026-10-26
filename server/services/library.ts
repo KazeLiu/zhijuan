@@ -82,6 +82,7 @@ export async function uploadLibraryFile(
 
   try {
     withTransaction(db, () => {
+      assertLibraryQuota(countLibraryFiles(db))
       insertLibraryFile(
         db,
         {

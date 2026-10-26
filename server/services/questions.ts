@@ -9,6 +9,7 @@ import {
 } from '../../shared/constants'
 import type { ExamRow } from '../db/queries/exams'
 import { findExam, touchExamVersion } from '../db/queries/exams'
+import { findActiveJob } from '../db/queries/jobs'
 import { deleteQuestionsNotIn, findQuestion, insertQuestion, listQuestions, type QuestionRow } from '../db/queries/questions'
 import type { AnswerDefinition, BlankDefinition, QuestionDraftInput, QuestionOption, QuestionType, SourceRef } from '../../shared/types/question'
 import { allocateUnits, findQuestionStructureIssue } from './grading'
@@ -236,6 +237,9 @@ export function saveQuestions(
     if (!exam) throw new ApiFailure('NOT_FOUND', '考试场次不存在')
     if (exam.status !== 'draft') {
       throw new ApiFailure('EXAM_LOCKED', '已发布场次不能修改题目', { reason: 'published' })
+    }
+    if (findActiveJob(db, examId)) {
+      throw new ApiFailure('EXAM_HAS_ACTIVE_JOB', '出题任务进行中，暂不能修改题目')
     }
     if (exam.version !== expectedVersion) {
       throw new ApiFailure('VERSION_CONFLICT', '场次已被更新，请刷新后重试', { serverVersion: exam.version })

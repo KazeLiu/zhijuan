@@ -18,7 +18,7 @@ export function scoreUnitsToInput(units: number | null | undefined): string {
   return (units / 100).toFixed(2)
 }
 
-/** 浏览器 IANA 时区；取不到时回退到 Asia/Shanghai（契约 §8.5 要求前端必须传） */
+/** 无场次时的展示时区；取不到浏览器时区时回退到 Asia/Shanghai。 */
 export function browserTimeZone(): string {
   try {
     const resolved = Intl.DateTimeFormat().resolvedOptions().timeZone

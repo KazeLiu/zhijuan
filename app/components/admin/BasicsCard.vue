@@ -177,7 +177,7 @@ function conflictText(item: ConflictItem): string {
     </template>
 
     <el-alert v-if="locked" type="info" :closable="false" show-icon class="basics__alert"
-      title="场次已发布或已有答卷，基本信息只读。" />
+      title="场次已发布、已有答卷或正在出题，基本信息暂不可修改。" />
 
     <el-form label-position="top" class="basics__form" @submit.prevent="save">
       <el-form-item label="标题" :error="mergedErrors.title">

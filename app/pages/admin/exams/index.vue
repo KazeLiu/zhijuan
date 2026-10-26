@@ -1,7 +1,8 @@
 <script setup lang="ts">
 /** 场次列表与新建（契约 §9.2 / §8.5 #15、#16） */
 import type { ExamAdminDTO, ExamCreateRequest, ExamListRowDTO, Paginated } from '#shared/types'
-import { DEFAULT_PAGE_SIZE, MAX_TITLE_CHARS } from '#shared/constants'
+import { DEFAULT_EXAM_TIME_ZONE, DEFAULT_PAGE_SIZE, MAX_TITLE_CHARS } from '#shared/constants'
+import { defaultExamTitle } from '#shared/utils/exam'
 
 definePageMeta({ layout: 'admin' })
 useHead({ title: '知卷 · 考试场次' })
@@ -34,7 +35,7 @@ const createDialog = ref(false)
 const creating = ref(false)
 const createError = ref('')
 const newTitle = ref('')
-const newTimeZone = ref(browserTimeZone())
+const newTimeZone = ref(DEFAULT_EXAM_TIME_ZONE)
 
 function applyFilters(): void {
   page.value = 1
@@ -50,8 +51,8 @@ function resetFilters(): void {
 
 function openCreate(): void {
   createError.value = ''
-  newTitle.value = ''
-  newTimeZone.value = browserTimeZone()
+  newTimeZone.value = DEFAULT_EXAM_TIME_ZONE
+  newTitle.value = defaultExamTitle(Date.now())
   createDialog.value = true
 }
 

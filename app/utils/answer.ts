@@ -5,6 +5,11 @@
 import type { AnswerMap, CandidateAnswer, CandidateQuestion, QuestionOption, QuestionType } from '#shared/types'
 import { TRUE_FALSE_OPTIONS } from '#shared/constants'
 
+/** 填空标识只用于数据关联，题面统一显示下划线。 */
+export function formatQuestionStem(stem: string, type: QuestionType): string {
+  return type === 'fill_blank' ? stem.replace(/\{\{\s*b\d+\s*\}\}/gu, '_____') : stem
+}
+
 /** 该题型是否从固定选项里选（判断题也算） */
 export function isChoiceQuestion(type: QuestionType): boolean {
   return type !== 'fill_blank'
@@ -76,8 +81,8 @@ export function describeAnswer(question: AnswerQuestionLike, answer: CandidateAn
   if (answer.type === 'fill_blank') {
     const entries = Object.entries(answer.values ?? {}).filter(([, value]) => String(value ?? '').trim().length > 0)
     if (entries.length === 0) return '未作答'
-    entries.sort(([left], [right]) => left.localeCompare(right))
-    return entries.map(([blankId, value]) => `${blankId}：${value}`).join('；')
+    entries.sort(([left], [right]) => left.localeCompare(right, undefined, { numeric: true }))
+    return entries.map(([blankId, value]) => `第${blankId.slice(1)}空：${value}`).join('；')
   }
   const ids = answer.selectedOptionIds ?? []
   if (ids.length === 0) return '未作答'
@@ -100,7 +105,7 @@ export function describeCorrectAnswer(
   if (type === 'fill_blank') {
     if (blanks.length === 0) return '—'
     return blanks
-      .map((blank) => `${blank.id}：${blank.acceptedAnswers.length > 0 ? blank.acceptedAnswers.join(' / ') : '—'}`)
+      .map((blank, index) => `第${index + 1}空：${blank.acceptedAnswers.length > 0 ? blank.acceptedAnswers.join(' / ') : '—'}`)
       .join('；')
   }
   if (correctOptionIds.length === 0) return '—'

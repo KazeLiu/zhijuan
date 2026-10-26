@@ -93,7 +93,6 @@ const generateBlockers = computed<string[]>(() => {
     blockers.push(`题数合计需在 ${MIN_QUESTIONS}–${MAX_QUESTIONS} 之间（当前 ${total.value}）`)
   }
   if (jobRunning.value) blockers.push('已有出题任务在执行')
-  if (props.exam.questions.length > 0) blockers.push('已有题目；重新出题会生成新题目，保存后覆盖')
   return blockers
 })
 
@@ -144,6 +143,15 @@ async function saveBlueprint(): Promise<number | null> {
 }
 
 async function generate(): Promise<void> {
+  if (props.exam.questions.length > 0) {
+    try {
+      await ElMessageBox.confirm('重新生成成功后将替换本场已有题目；生成失败保留服务器上的原题目。确定继续吗？', '重新出题', {
+        confirmButtonText: '重新生成', cancelButtonText: '取消', type: 'warning',
+      })
+    } catch {
+      return
+    }
+  }
   generateError.value = ''
   let version = props.exam.version
   if (blueprintDirty.value) {
@@ -161,6 +169,7 @@ async function generate(): Promise<void> {
     })
     job.value = created
     track(created)
+    emit('changed')
     emit('addListen', created.id)
     ElMessage.success('已开始出题，完成后会提示')
   } catch (error) {
@@ -187,6 +196,7 @@ async function retryJob(): Promise<void> {
     })
     job.value = next
     track(next)
+    emit('changed')
     ElMessage.success('已重新提交出题任务')
   } catch (error) {
     generateError.value = describeApiError(error, '重试失败')
@@ -229,7 +239,7 @@ defineExpose({ refreshJob })
           :min="0"
           :max="MAX_QUESTIONS"
           :step="1"
-          :disabled="locked"
+          :disabled="locked || jobRunning"
           @change="clampCount('singleChoice')"
         />
       </label>
@@ -240,7 +250,7 @@ defineExpose({ refreshJob })
           :min="0"
           :max="MAX_QUESTIONS"
           :step="1"
-          :disabled="locked"
+          :disabled="locked || jobRunning"
           @change="clampCount('multipleChoice')"
         />
       </label>
@@ -251,7 +261,7 @@ defineExpose({ refreshJob })
           :min="0"
           :max="MAX_QUESTIONS"
           :step="1"
-          :disabled="locked"
+          :disabled="locked || jobRunning"
           @change="clampCount('trueFalse')"
         />
       </label>
@@ -262,7 +272,7 @@ defineExpose({ refreshJob })
           :min="0"
           :max="MAX_QUESTIONS"
           :step="1"
-          :disabled="locked"
+          :disabled="locked || jobRunning"
           @change="clampCount('fillBlank')"
         />
       </label>
@@ -271,7 +281,7 @@ defineExpose({ refreshJob })
     <div class="bp__row">
       <label class="bp__field bp__field--inline">
         <span class="bp__label">难度</span>
-        <el-radio-group v-model="blueprint.difficulty" :disabled="locked">
+        <el-radio-group v-model="blueprint.difficulty" :disabled="locked || jobRunning">
           <el-radio-button v-for="level in DIFFICULTIES" :key="level" :value="level">
             {{ DIFFICULTY_LABELS[level] }}
           </el-radio-button>
@@ -287,7 +297,7 @@ defineExpose({ refreshJob })
         :rows="3"
         :maxlength="MAX_EXTRA_PROMPT_CHARS"
         show-word-limit
-        :disabled="locked"
+        :disabled="locked || jobRunning"
         placeholder="例如：侧重第三章的应急处置流程，避免出现日期类记忆题"
       />
     </label>
@@ -295,7 +305,7 @@ defineExpose({ refreshJob })
     <el-alert v-if="saveError" type="error" :closable="false" show-icon :title="saveError" class="bp__alert" />
 
     <div class="bp__actions">
-      <el-button :loading="saving" :disabled="locked || !blueprintDirty" @click="saveBlueprint">
+      <el-button :loading="saving" :disabled="locked || jobRunning || !blueprintDirty" @click="saveBlueprint">
         保存出题设定
       </el-button>
       <el-button type="primary" :loading="generating" :disabled="generateBlockers.length > 0" @click="generate">

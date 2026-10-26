@@ -284,7 +284,7 @@ async function submitGrade() {
               </el-button>
             </header>
 
-            <p class="zj-attempt-admin__stem">{{ question.stem }}</p>
+            <p class="zj-attempt-admin__stem">{{ formatQuestionStem(question.stem, question.type) }}</p>
 
             <dl class="zj-attempt-admin__answers">
               <div>
@@ -367,7 +367,7 @@ async function submitGrade() {
         <el-form-item label="题目">
           <div class="zj-attempt-admin__grade-stem">
             第 {{ gradeTarget?.position }} 题 · {{ gradeTarget ? QUESTION_TYPE_LABELS[gradeTarget.type] : '' }}
-            <p>{{ gradeTarget?.stem }}</p>
+            <p v-if="gradeTarget">{{ formatQuestionStem(gradeTarget.stem, gradeTarget.type) }}</p>
           </div>
         </el-form-item>
         <el-form-item label="分数（满分 {{ gradeMaxScore }}）" required>

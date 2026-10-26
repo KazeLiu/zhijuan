@@ -18,6 +18,7 @@ export interface LoginResultDTO {
   authenticated: true
   name: string
   role: Role
+  /** 管理员为 /admin，考生为 /；登录本身不开始考试。 */
   landing: string
   serverNow: EpochMs
 }

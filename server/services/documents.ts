@@ -14,6 +14,7 @@ import type { SourceRef } from '../../shared/types/question'
 import type { DocumentPreviewDTO } from '../../shared/types/admin'
 import {
   insertDocument,
+  countDocuments,
   listDocuments,
   listSegments,
   findDocument,
@@ -25,6 +26,8 @@ import {
   type DocumentRecord,
 } from '../db/queries/documents'
 import { findQuestionsReferencingDocument } from '../db/queries/questions'
+import { findExam } from '../db/queries/exams'
+import { findActiveJob } from '../db/queries/jobs'
 import { insertLibraryFile } from '../db/queries/library'
 import { ApiFailure, throwApi } from '../utils/respond'
 import { withTransaction } from '../utils/db'
@@ -198,6 +201,22 @@ export async function parseDocumentBytes(
 
 /* ------------------------------ 上传与删除 ------------------------------ */
 
+function assertDocumentsEditable(db: DatabaseSync, examId: string): void {
+  const exam = findExam(db, examId)
+  if (!exam) throw new ApiFailure('NOT_FOUND', '考试场次不存在')
+  if (exam.status !== 'draft') throwApi('EXAM_LOCKED', '已发布场次不能修改资料', { reason: 'published' })
+  if (findActiveJob(db, examId)) throwApi('EXAM_HAS_ACTIVE_JOB', '出题任务进行中，暂不能修改资料')
+}
+
+function assertDocumentChars(db: DatabaseSync, examId: string, incomingChars: number): void {
+  const currentChars = sumDocumentChars(db, examId)
+  if (currentChars + incomingChars > MAX_TOTAL_DOCUMENT_CHARS) {
+    throwApi('DOCUMENT_CHARS_EXCEEDED', `本场资料合计不能超过 ${MAX_TOTAL_DOCUMENT_CHARS} 字符`, {
+      currentChars, incomingChars, limit: MAX_TOTAL_DOCUMENT_CHARS,
+    })
+  }
+}
+
 export interface UploadedFile {
   filename: string
   type?: string
@@ -262,14 +281,7 @@ export async function uploadDocument(
   const format = detectFormat(file.filename, file.data)
   const parsed = await parseDocumentBytes(format, file.data)
 
-  const currentChars = sumDocumentChars(db, examId)
-  if (currentChars + parsed.charCount > MAX_TOTAL_DOCUMENT_CHARS) {
-    throwApi('DOCUMENT_CHARS_EXCEEDED', `本场资料合计不能超过 ${MAX_TOTAL_DOCUMENT_CHARS} 字符`, {
-      currentChars,
-      incomingChars: parsed.charCount,
-      limit: MAX_TOTAL_DOCUMENT_CHARS,
-    })
-  }
+  assertDocumentChars(db, examId, parsed.charCount)
 
   const documentId = randomUUID()
   const libraryFileId = randomUUID()
@@ -281,6 +293,10 @@ export async function uploadDocument(
 
   try {
     withTransaction(db, () => {
+      // 读取请求、解析文件与磁盘写入均会让出执行权，最终写入前重新检查。
+      assertDocumentsEditable(db, examId)
+      assertDocumentQuota(countDocuments(db, examId))
+      assertDocumentChars(db, examId, parsed.charCount)
       insertLibraryFile(
         db,
         {
@@ -327,14 +343,16 @@ export async function uploadDocument(
  * 被题目引用时 409 DOCUMENT_IN_USE。
  */
 export async function deleteDocument(db: DatabaseSync, examId: string, documentId: string): Promise<void> {
-  const document = findDocument(db, examId, documentId)
-  if (!document) throw new ApiFailure('NOT_FOUND', '资料不存在')
-  const questionIds = findQuestionsReferencingDocument(db, examId, documentId)
-  if (questionIds.length > 0) {
-    throw new ApiFailure('DOCUMENT_IN_USE', '该资料仍被题目引用，无法删除', { questionIds })
-  }
-  withTransaction(db, () => {
+  const document = withTransaction(db, () => {
+    assertDocumentsEditable(db, examId)
+    const record = findDocument(db, examId, documentId)
+    if (!record) throw new ApiFailure('NOT_FOUND', '资料不存在')
+    const questionIds = findQuestionsReferencingDocument(db, examId, documentId)
+    if (questionIds.length > 0) {
+      throw new ApiFailure('DOCUMENT_IN_USE', '该资料仍被题目引用，无法删除', { questionIds })
+    }
     deleteDocumentRow(db, documentId)
+    return record
   })
   // 历史数据（library_file_id 为空）的文件没有被资料库接管，仍由场次侧负责清理
   if (document.libraryFileId === null) {

@@ -1,15 +1,13 @@
 <script setup lang="ts">
 /**
  * 入口页（设计 §6.1、契约 §9.1）：
- * 未登录 → 姓名登录卡片；登录后按 login.landing 跳转；
- * 已登录直接访问 → 按 GET /api/exams/current 分流。
+ * 未登录 → 姓名登录卡片；考生登录后展示考试安排，点击后才开始答题。
  */
 import type { AttemptStartResult, CurrentExamDTO, LoginResultDTO, SessionDTO } from '#shared/types'
 
 useHead({ title: '知卷 · 姓名进入' })
 
-const { session, refresh, logout } = useAuthSession()
-const route = useRoute()
+const { session, logout } = useAuthSession()
 const starting = ref(false)
 const startError = ref('')
 
@@ -33,7 +31,7 @@ const {
 } = await useAsyncData<CurrentExamDTO>(
   'zj-current-exam',
   () => apiFetch<CurrentExamDTO>('/api/exams/current', { silent: true }),
-  { server: true, immediate: authenticated.value },
+  { server: true, immediate: authenticated.value && session.value?.role === 'candidate' },
 )
 
 const currentErrorText = computed(() => (currentError.value ? describeApiError(currentError.value, '无法获取考试信息') : ''))
@@ -54,15 +52,25 @@ const myAttempt = computed(() => current.value?.myAttempt ?? null)
 
 /** 登录/切换身份后重新取会话与场次，避免旧缓存 */
 async function reloadAll(): Promise<void> {
-  await clearNuxtData()
-  await refresh()
+  clearNuxtData()
   await reloadSession()
-  await reloadCurrent()
+  session.value = sessionData.value ?? null
+  if (session.value?.role === 'candidate') await reloadCurrent()
 }
 
 async function handleLoggedIn(result: LoginResultDTO): Promise<void> {
-  await clearNuxtData()
-  await navigateTo(result.landing)
+  clearNuxtData()
+  sessionData.value = {
+    authenticated: true,
+    name: result.name,
+    role: result.role,
+    serverNow: result.serverNow,
+  }
+  if (result.role === 'admin') {
+    await navigateTo(result.landing)
+    return
+  }
+  await reloadCurrent()
 }
 
 async function handleLogout(): Promise<void> {
@@ -70,7 +78,7 @@ async function handleLogout(): Promise<void> {
   await reloadAll()
 }
 
-/** 开放中且没有答卷：按设计 §6.1 直接创建答卷并进入作答页 */
+/** 点击开始后才创建答卷并计时。 */
 async function startAttempt(): Promise<void> {
   const exam = current.value?.exam
   if (!exam || starting.value) return
@@ -93,16 +101,6 @@ async function startAttempt(): Promise<void> {
     starting.value = false
   }
 }
-
-/** 已登录且开放中、无答卷时自动建卷（客户端执行，避免 SSR 写请求） */
-onMounted(async () => {
-  if (route.query.manual === '1') return
-  if (!authenticated.value) return
-  if (current.value?.phase !== 'open') return
-  if (current.value.myAttempt !== null) return
-  if (session.value?.role === 'admin') return
-  await startAttempt()
-})
 </script>
 
 <template>
@@ -172,7 +170,7 @@ onMounted(async () => {
           @retry="reloadCurrent()"
         />
 
-        <StatePanel v-else-if="currentPending && !current" state="loading" title="正在获取考试安排…" :loading-rows="3" />
+        <StatePanel v-else-if="currentPending || !current" state="loading" title="正在获取考试安排…" :loading-rows="3" />
 
         <div v-else class="entry__panel">
           <!-- 开放中 -->
@@ -184,7 +182,7 @@ onMounted(async () => {
               （{{ current.exam.timeZone }}）
             </p>
             <p class="entry__panel-text zj-muted">
-              {{ current.exam.instructions || '本场考试开始时即计正计时，交卷后立即出分。' }}
+              {{ current.exam.instructions || '点击“开始答题”后计时，交卷后立即出分。' }}
             </p>
 
             <el-alert
@@ -199,7 +197,7 @@ onMounted(async () => {
             <div class="entry__actions">
               <template v-if="!myAttempt">
                 <el-button type="primary" size="large" :loading="starting" @click="startAttempt">
-                  开始答题（进入即计时）
+                  开始答题
                 </el-button>
               </template>
               <template v-else-if="myAttempt.status === 'in_progress'">

@@ -75,7 +75,7 @@ export function buildResultsSummary(db: DatabaseSync, exam: ExamRow, now: number
     if (maxScoreUnits === undefined) continue
     const bucket = buckets.get(stat.questionId) ?? { correct: 0, partial: 0, zero: 0 }
     const finalScoreUnits = stat.overrideScoreUnits ?? stat.autoScoreUnits
-    if (stat.unanswered || finalScoreUnits <= 0) bucket.zero += 1
+    if (finalScoreUnits <= 0) bucket.zero += 1
     else if (finalScoreUnits >= maxScoreUnits) bucket.correct += 1
     else bucket.partial += 1
     buckets.set(stat.questionId, bucket)

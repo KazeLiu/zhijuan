@@ -206,7 +206,7 @@ function nextPage(): void {
     </template>
 
     <el-alert v-if="locked" type="info" :closable="false" show-icon class="docs__notice"
-      title="场次已发布或已有答卷，资料只读。" />
+      title="场次已发布、已有答卷或正在出题，资料暂不可修改。" />
 
     <el-alert v-if="uploadError" type="error" :closable="false" show-icon :title="uploadError" class="docs__notice" />
     <el-alert v-if="attachError" type="error" show-icon :title="attachError" class="docs__notice" @close="attachError = ''" />

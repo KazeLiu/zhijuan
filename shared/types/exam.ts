@@ -118,7 +118,7 @@ export interface ExamListRowDTO {
 /** 新建场次入参 */
 export interface ExamCreateRequest {
   title?: string
-  /** 管理员浏览器 IANA 时区；省略时服务端使用进程时区 */
+  /** 场次 IANA 时区；省略时默认 Asia/Shanghai */
   timeZone?: string
 }
 
@@ -194,14 +194,18 @@ export interface JobDTO {
  * 按 offset 增量拉取，前端只追加新增部分，避免每次轮询重传整段文本。
  */
 export interface JobOutputDTO {
-  /** 从请求的 offset 开始的新增文本；offset 越界时为空串 */
+  /** 从累计输出游标开始的新增文本，已截断的部分跳到最早保留位置。 */
   text: string
-  /** 本次返回内容结束位置，下次请求带上它 */
+  /** 累计输出中的结束位置，下次请求带上它，不随缓冲区截断回退。 */
   offset: number
-  /** 已收集的总字符数 */
+  /** 当前保留窗口的字符数，最多 JOB_OUTPUT_MAX_CHARS。 */
   total: number
   /** 任务是否已结束（succeeded/failed），结束且取完即可停止轮询 */
   done: boolean
   /** 因超出上限被丢弃的前缀字符数（>0 时界面提示「已截断」） */
   truncated: number
+  /** 当前执行轮次标识；重试同一任务时变化，下次请求原样带上。 */
+  runId?: string
+  /** 返回片段在累计输出中的起始位置，用于处理截断与重试。 */
+  startOffset?: number
 }

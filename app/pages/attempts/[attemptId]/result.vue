@@ -19,6 +19,7 @@ const loadError = ref('')
 const notSubmitted = ref(false)
 const refreshing = ref(false)
 const detailWarning = ref('')
+const clock = useServerClock()
 
 const examTimeZone = ref(browserTimeZone())
 const revealText = computed(() => {
@@ -54,6 +55,7 @@ async function load(options: { silent?: boolean } = {}): Promise<void> {
   try {
     const data = await apiFetch<AttemptResultDTO>(`/api/attempts/${attemptId.value}/result`, { silent: true })
     result.value = data
+    clock.sync(data.serverNow)
     detailQuestions.value = []
     detailWarning.value = ''
 
@@ -96,15 +98,11 @@ function scheduleRevealRefresh(): void {
   clearRevealTimer()
   const data = result.value
   if (!data || data.canReveal) return
-  const delay = data.revealAt - Date.now()
-  if (delay <= 0) {
-    void load({ silent: true })
-    return
-  }
+  const delay = data.revealAt - (Date.now() + clock.offset.value)
   // setTimeout 上限约 24.8 天，超过则先按上限等待
   revealTimer = setTimeout(() => {
     void load({ silent: true })
-  }, Math.min(delay + 1000, 2_147_000_000))
+  }, Math.min(Math.max(delay + 1000, 1000), 2_147_000_000))
 }
 
 function handleVisibility(): void {
@@ -112,7 +110,7 @@ function handleVisibility(): void {
   if (document.visibilityState !== 'visible') return
   const data = result.value
   if (!data) return
-  if (!data.canReveal && Date.now() >= data.revealAt) void load({ silent: true })
+  if (!data.canReveal) void load({ silent: true })
 }
 
 async function backToAttempt(): Promise<void> {
@@ -237,7 +235,7 @@ onBeforeUnmount(() => {
             </span>
           </header>
 
-          <p class="rq__stem">{{ question.stem }}</p>
+          <p class="rq__stem">{{ formatQuestionStem(question.stem, question.type) }}</p>
 
           <dl class="rq__rows">
             <div class="rq__row">
@@ -294,7 +292,7 @@ onBeforeUnmount(() => {
           </el-table-column>
           <el-table-column label="题干" min-width="240">
             <template #default="{ row }">
-              <span class="result__stem-cell">{{ row.stem }}</span>
+              <span class="result__stem-cell">{{ formatQuestionStem(row.stem, row.type) }}</span>
             </template>
           </el-table-column>
           <el-table-column label="我的答案" min-width="220">

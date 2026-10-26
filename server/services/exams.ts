@@ -14,6 +14,7 @@ import type {
 import { EMPTY_BLUEPRINT, blueprintTotal } from '../../shared/types/exam'
 import type { BlueprintDTO } from '../../shared/types/exam'
 import {
+  DEFAULT_EXAM_TIME_ZONE,
   DIFFICULTIES,
   MAX_INSTRUCTIONS_CHARS,
   MAX_QUESTIONS,
@@ -21,6 +22,7 @@ import {
   MAX_EXTRA_PROMPT_CHARS,
   SCORE_TOTAL_UNITS,
 } from '../../shared/constants'
+import { defaultExamTitle } from '../../shared/utils/exam'
 import {
   countAttemptsOfExam,
   countQuestionsOfExam,
@@ -47,8 +49,8 @@ import { findAttemptByName, type AttemptRecord } from '../db/queries/attempts'
 import { ApiFailure, throwApi } from '../utils/respond'
 import { withTransaction } from '../utils/db'
 import { FieldErrors, isPlainObject, readExpectedVersion } from '../utils/validate'
-import { parseIsoInstant, parseTimeZone, processTimeZone, startOfDayInZone, startOfNextDayInZone } from '../utils/time'
-import { getUploadsDir } from '../utils/paths'
+import { parseIsoInstant, parseTimeZone, startOfDayInZone, startOfNextDayInZone } from '../utils/time'
+import { getStorageRoot } from '../utils/paths'
 import { countByType, findStoredQuestionIssue, questionCountValid } from './questions'
 import { validateSourceRefs } from './documents'
 
@@ -254,11 +256,11 @@ export function createExam(db: DatabaseSync, body: Record<string, unknown>, now:
   const errors = new FieldErrors()
   const titleInput = errors.text(body, 'title', '标题', { max: MAX_TITLE_CHARS })
   const timeZone = body.timeZone === undefined || body.timeZone === null || body.timeZone === ''
-    ? processTimeZone()
+    ? DEFAULT_EXAM_TIME_ZONE
     : parseTimeZone(body.timeZone, 'timeZone')
   errors.throwIfAny()
 
-  const title = (titleInput ?? '').trim() === '' ? '未命名考试' : (titleInput ?? '').trim()
+  const title = titleInput?.trim() || defaultExamTitle(now, timeZone)
   const startsAt = startOfDayInZone(timeZone, now)
   const endsAt = startOfNextDayInZone(timeZone, startsAt)
   const id = randomUUID()
@@ -342,17 +344,22 @@ export function updateExam(db: DatabaseSync, examId: string, body: Record<string
 
 /** 删除草稿（§8.5 19）：连库带文件一起清理 */
 export async function deleteExam(db: DatabaseSync, examId: string): Promise<void> {
-  const exam = findExam(db, examId)
-  if (!exam) throw new ApiFailure('NOT_FOUND', '考试场次不存在')
-  if (exam.status !== 'draft') {
-    throwApi('EXAM_LOCKED', '已发布的场次不能删除', { reason: 'published' })
+  const privateFiles = withTransaction(db, () => {
+    const exam = findExam(db, examId)
+    if (!exam) throw new ApiFailure('NOT_FOUND', '考试场次不存在')
+    assertDraftEditable(db, exam)
+    const attemptCount = countAttemptsOfExam(db, examId)
+    if (attemptCount > 0) {
+      throwApi('EXAM_HAS_ATTEMPTS', '该场次已有答卷，不能删除', { reason: 'has_attempts', attemptCount })
+    }
+    // 迁移回填的资料也可能仍在旧场次目录内，资料库拥有的原件不能删除。
+    const files = listDocuments(db, examId).filter((document) => document.libraryFileId === null)
+    deleteExamRow(db, examId)
+    return files
+  })
+  for (const document of privateFiles) {
+    await rm(join(getStorageRoot(), document.storagePath), { force: true }).catch(() => undefined)
   }
-  const attemptCount = countAttemptsOfExam(db, examId)
-  if (attemptCount > 0) {
-    throwApi('EXAM_HAS_ATTEMPTS', '该场次已有答卷，不能删除', { reason: 'has_attempts', attemptCount })
-  }
-  withTransaction(db, () => deleteExamRow(db, examId))
-  await rm(join(getUploadsDir(), examId), { recursive: true, force: true }).catch(() => undefined)
 }
 
 /** 发布（§8.5 25）：八项预检全过才落库；时间冲突优先返回 409 */
