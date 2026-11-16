@@ -223,6 +223,12 @@ export function readExpectedVersion(body: Record<string, unknown>): number {
   return raw
 }
 
+/** 读取可选的 expectedVersion：缺省返回 undefined（生命周期动作允许不带），给了就必须合法 */
+export function readOptionalExpectedVersion(body: Record<string, unknown>): number | undefined {
+  if (body.expectedVersion === undefined || body.expectedVersion === null) return undefined
+  return readExpectedVersion(body)
+}
+
 /** SQLite 唯一约束冲突（用于并发插入时回读已有行） */
 export function isUniqueViolation(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)

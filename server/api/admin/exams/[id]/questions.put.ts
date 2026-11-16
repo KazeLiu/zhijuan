@@ -19,8 +19,13 @@ export default defineEventHandler(async (event) => {
       throw new ApiFailure('VALIDATION_FAILED', '题目列表格式不正确', { fields: { questions: '必须是数组' } })
     }
     const db = useDb()
-    const exam = saveQuestions(db, examId, expectedVersion, questions, now)
-    return ok(event, getExamAdminDTO(db, exam.id, now))
+    const result = saveQuestions(db, examId, expectedVersion, questions, now)
+    // 草稿与暂停态共用同一响应形状：场次管理 DTO 附带题库同步计数
+    return ok(event, {
+      ...getExamAdminDTO(db, result.exam.id, now),
+      syncedBankItems: result.syncedBankItems,
+      skippedBankItems: result.skippedBankItems,
+    })
   } catch (error) {
     return failFrom(event, error)
   }

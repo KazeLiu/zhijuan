@@ -1,12 +1,12 @@
 /** 考试场次 DTO 与阶段（docs/impl-contract.md §6、§8.5） */
 import type { EpochMs } from './common'
-import type { Difficulty, QuestionDraftInput } from './question'
+import type { Difficulty, QuestionAdminDTO, QuestionDraftInput } from './question'
 
 /** 数据库只存两种发布状态 */
 export type ExamStatus = 'draft' | 'published'
 
-/** 页面阶段由服务端时间实时计算 */
-export type ExamPhase = 'draft' | 'upcoming' | 'open' | 'closed'
+/** 页面阶段由服务端时间实时计算（已结束优先于已暂停，见 computeExamPhase） */
+export type ExamPhase = 'draft' | 'upcoming' | 'open' | 'paused' | 'closed'
 
 export type AnswerRevealPolicy = 'immediate' | 'after_exam'
 
@@ -79,6 +79,12 @@ export interface ExamAdminDTO {
   phase: ExamPhase
   startsAt: EpochMs
   endsAt: EpochMs
+  /** 暂停时刻；非空表示管理员已暂停（仍在开放窗口内但不接受新答卷） */
+  pausedAt: EpochMs | null
+  /** 管理员提前结束时刻；非空表示场次已结束 */
+  endedAt: EpochMs | null
+  /** 实际结束时刻：endedAt 存在且早于 endsAt 时取 endedAt，否则取 endsAt */
+  effectiveEndsAt: EpochMs
   timeZone: string
   answerRevealPolicy: AnswerRevealPolicy
   blueprint: BlueprintDTO
@@ -106,6 +112,8 @@ export interface ExamListRowDTO {
   phase: ExamPhase
   startsAt: EpochMs
   endsAt: EpochMs
+  pausedAt: EpochMs | null
+  endedAt: EpochMs | null
   timeZone: string
   answerRevealPolicy: AnswerRevealPolicy
   questionCount: number
@@ -166,6 +174,26 @@ export interface CurrentExamDTO {
   /** 下一场未开始的已发布场次 */
   nextExam: ExamPublicDTO | null
   myAttempt: MyAttemptBriefDTO | null
+}
+
+/** 考生可选场次（契约 §10.2）：只有 open 可进入，upcoming 置灰 */
+export interface AvailableExamItemDTO {
+  id: string
+  title: string
+  startsAt: EpochMs
+  endsAt: EpochMs
+  timeZone: string
+  phase: 'open' | 'upcoming'
+  questionCount: number
+  myAttempt: {
+    id: string
+    status: 'in_progress' | 'submitted'
+    submittedAt: EpochMs | null
+  } | null
+}
+
+export interface AvailableExamsDTO {
+  items: AvailableExamItemDTO[]
 }
 
 /* ------------------------------ 出题任务 ------------------------------ */

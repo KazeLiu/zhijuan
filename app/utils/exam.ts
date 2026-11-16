@@ -2,8 +2,16 @@
  * 场次相关的展示与时间换算（契约 §6.1 / §8.5）。
  * 时区换算集中在这里，页面只负责取 IANA 时区名与展示。
  */
-import type { AnswerRevealPolicy, CandidateExamPhase, ExamPhase, ExamStatus, EpochMs } from '#shared/types'
+import type {
+  AnswerRevealPolicy,
+  CandidateExamPhase,
+  ExamPhase,
+  ExamStatus,
+  EpochMs,
+} from '#shared/types'
 import { PASS_SCORE_UNITS } from '#shared/constants'
+import { ApiClientError, describeApiError } from '~/composables/useApi'
+import type { ApiClientCode } from '~/composables/useApi'
 import { browserTimeZone, formatDateTime, timeZoneOffsetMinutes, toIsoWithOffset } from './format'
 
 export type TagType = 'primary' | 'success' | 'info' | 'warning' | 'danger'
@@ -12,14 +20,34 @@ export const EXAM_PHASE_LABELS: Record<ExamPhase, string> = {
   draft: '草稿',
   upcoming: '未开始',
   open: '开放中',
+  paused: '已暂停',
   closed: '已结束',
 }
 
+/** 阶段标签配色：未开始=蓝、开放中=绿、已暂停=橙、草稿与已结束=灰，避免「未开始」与「已暂停」撞色 */
 export const EXAM_PHASE_TAG_TYPES: Record<ExamPhase, TagType> = {
   draft: 'info',
-  upcoming: 'warning',
+  upcoming: 'primary',
   open: 'success',
+  paused: 'warning',
   closed: 'info',
+}
+
+/** 场次生命周期错误码的固定中文文案（契约 §7） */
+export const LIFECYCLE_ERROR_MESSAGES: Partial<Record<ApiClientCode, string>> = {
+  EXAM_ALREADY_PAUSED: '场次已暂停',
+  EXAM_NOT_PAUSED: '场次当前不是暂停状态',
+  EXAM_ALREADY_ENDED: '场次已结束',
+  EXAM_STRUCTURE_LOCKED: '暂停状态只能修改题干、选项、答案与解析，不能增删题目或改题型',
+}
+
+/** 错误 → 可展示文案：命中生命周期错误码用固定中文，否则回落到服务端 message */
+export function describeLifecycleError(error: unknown, fallback: string): string {
+  if (error instanceof ApiClientError) {
+    const fixed = LIFECYCLE_ERROR_MESSAGES[error.code]
+    if (fixed) return fixed
+  }
+  return describeApiError(error, fallback)
 }
 
 export const CANDIDATE_PHASE_LABELS: Record<CandidateExamPhase, string> = {
@@ -45,11 +73,20 @@ export const COMMON_TIME_ZONES = [
   { label: 'America/New_York（纽约）', value: 'America/New_York' },
 ] as const
 
-/** 用服务端时间本地推算阶段；服务端时间仍是权威 */
-export function computeExamPhase(status: ExamStatus, startsAt: EpochMs, endsAt: EpochMs, now: EpochMs): ExamPhase {
+/** 用服务端时间本地推算阶段；服务端时间仍是权威（契约 §2：已结束优先于已暂停） */
+export function computeExamPhase(
+  status: ExamStatus,
+  startsAt: EpochMs,
+  endsAt: EpochMs,
+  now: EpochMs,
+  pausedAt: EpochMs | null = null,
+  endedAt: EpochMs | null = null,
+): ExamPhase {
   if (status === 'draft') return 'draft'
+  const effectiveEnd = endedAt !== null && endedAt < endsAt ? endedAt : endsAt
+  if (endedAt !== null || now >= effectiveEnd) return 'closed'
+  if (pausedAt !== null) return 'paused'
   if (now < startsAt) return 'upcoming'
-  if (now >= endsAt) return 'closed'
   return 'open'
 }
 

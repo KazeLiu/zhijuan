@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * 基本信息（契约 §9.2 / §8.5 #18）：标题、说明、开放时间（场次时区墙上时间）、时区。
- * PATCH 发送带偏移的 ISO 字符串；时间冲突由服务端 409 EXAM_TIME_CONFLICT 返回。
+ * PATCH 发送带偏移的 ISO 字符串；同时段允许多场，时间重叠不再视为冲突（契约 §10.1）。
  */
 import type { ExamAdminDTO, ExamUpdateRequest } from '#shared/types'
 import {
@@ -18,14 +18,6 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), { locked: false })
 const emit = defineEmits<{ changed: []; 'dirty-change': [dirty: boolean] }>()
 
-interface ConflictItem {
-  id?: string
-  title?: string
-  startsAt?: number
-  endsAt?: number
-  timeZone?: string
-}
-
 const form = reactive({
   title: '',
   instructions: '',
@@ -37,7 +29,6 @@ const form = reactive({
 const saving = ref(false)
 const saveError = ref('')
 const fieldErrors = ref<Record<string, string>>({})
-const conflicts = ref<ConflictItem[]>([])
 
 function fromExam(exam: ExamAdminDTO): void {
   form.title = exam.title
@@ -98,7 +89,6 @@ async function save(): Promise<void> {
   if (!canSave.value) return
   fieldErrors.value = {}
   saveError.value = ''
-  conflicts.value = []
 
   const zone = form.timeZone
   const startsAt = wallClockToIso(form.startsAt, zone)
@@ -135,12 +125,6 @@ async function save(): Promise<void> {
 function handleError(error: unknown): void {
   fieldErrors.value = readFieldErrors(error)
   if (error instanceof ApiClientError) {
-    if (error.code === 'EXAM_TIME_CONFLICT') {
-      const raw = (error.details as { conflicts?: unknown } | undefined)?.conflicts
-      conflicts.value = Array.isArray(raw) ? (raw as ConflictItem[]) : []
-      saveError.value = '与已有场次时间冲突，请调整开放时间'
-      return
-    }
     if (error.code === 'VERSION_CONFLICT') {
       saveError.value = '场次数据已被其他操作更新，已重新加载最新版本'
       emit('changed')
@@ -158,14 +142,8 @@ function reset(): void {
   fromExam(props.exam)
   fieldErrors.value = {}
   saveError.value = ''
-  conflicts.value = []
 }
 
-function conflictText(item: ConflictItem): string {
-  const zone = item.timeZone ?? form.timeZone
-  if (!item.startsAt || !item.endsAt) return item.title ?? item.id ?? '未知场次'
-  return `${item.title ?? item.id ?? '未命名场次'}：${formatDateTime(item.startsAt, zone)} ~ ${formatDateTime(item.endsAt, zone)}（${zone}）`
-}
 </script>
 
 <template>
@@ -238,16 +216,7 @@ function conflictText(item: ConflictItem): string {
         show-icon
         :title="saveError"
         class="basics__alert"
-      >
-        <template v-if="conflicts.length" #default>
-          <ul class="basics__conflicts">
-            <li v-for="(item, index) in conflicts" :key="item.id ?? index">
-              {{ conflictText(item) }}
-              <NuxtLink v-if="item.id" :to="`/admin/exams/${item.id}`" class="basics__conflict-link">打开</NuxtLink>
-            </li>
-          </ul>
-        </template>
-      </el-alert>
+      />
 
       <div class="basics__actions">
         <el-button type="primary" :loading="saving" :disabled="!canSave" @click="save">保存基本信息</el-button>
@@ -293,16 +262,6 @@ function conflictText(item: ConflictItem): string {
 .basics__preview {
   margin: 0 0 12px;
   font-size: 13px;
-}
-
-.basics__conflicts {
-  margin: 4px 0 0;
-  padding-left: 18px;
-  font-size: 14px;
-}
-
-.basics__conflict-link {
-  margin-left: 8px;
 }
 
 .basics__actions {

@@ -9,6 +9,7 @@ import type {
   SubmitResult,
 } from '../../shared/types/attempt'
 import { PASS_SCORE_UNITS, SCORE_TOTAL_UNITS } from '../../shared/constants'
+import { effectiveEndsAt } from '../../shared/utils/exam'
 import {
   answerMapFromRows,
   deleteAnswersNotIn,
@@ -80,14 +81,40 @@ export function sweepExpiredAttempts(db: DatabaseSync, now: number): number {
 
 /* ------------------------------ 开始/续答（§8.3 6） ------------------------------ */
 
+/** 指定场次的可作答校验（契约 §10.2）：已发布、未暂停、未提前结束、在开放窗口内 */
+function findStartableExam(db: DatabaseSync, examId: string, now: number): ExamRow | undefined {
+  const exam = findExam(db, examId)
+  if (!exam) return undefined
+  if (exam.status !== 'published') return undefined
+  if (exam.pausedAt !== null || exam.endedAt !== null) return undefined
+  if (now < exam.startsAt || now >= exam.endsAt) return undefined
+  return exam
+}
+
 export function startAttempt(
   db: DatabaseSync,
   name: string,
+  examId: string | null,
   now: number,
 ): { result: AttemptStartResult; created: boolean } {
   sweepExpiredAttempts(db, now)
-  const openExam = findOpenExam(db, now)
+  // 暂停和提前结束只阻止新答卷；已有答卷仍能经答题页入口续答或查看结果。
+  const prior = examId ? findAttemptByName(db, examId, name) : undefined
+  if (prior) {
+    return {
+      created: false,
+      result: {
+        attemptId: prior.id,
+        examId: prior.examId,
+        status: prior.status,
+        startedAt: prior.startedAt,
+        resumed: true,
+      },
+    }
+  }
+  const openExam = examId ? findStartableExam(db, examId, now) : findOpenExam(db, now)
   if (!openExam) {
+    if (examId) throwApi('EXAM_NOT_OPEN', '该场次当前不可作答', { examId })
     const nextExam = findNextExam(db, now)
     throwApi('EXAM_NOT_OPEN', '当前没有开放中的考试', {
       nextExam: nextExam ? toExamPublicDTO(nextExam) : null,
@@ -380,9 +407,13 @@ export function loadAttemptResult(
   if (!exam) throw new ApiFailure('NOT_FOUND', '考试场次不存在')
   const questions = listQuestions(db, exam.id)
   const rows = listAnswerRows(db, attempt.id)
-  const canReveal = exam.answerRevealPolicy === 'immediate' || now >= exam.endsAt
   const submittedAt = attempt.submittedAt ?? now
   const totalScoreUnits = attempt.totalScoreUnits ?? 0
+  // 契约 §3.2：after_exam 的揭示时刻是 min(endsAt, endedAt ?? endsAt)，提前结束后即可看答案
+  const revealAt = exam.answerRevealPolicy === 'immediate'
+    ? submittedAt
+    : effectiveEndsAt(exam.endsAt, exam.endedAt)
+  const canReveal = exam.answerRevealPolicy === 'immediate' || now >= revealAt
   return {
     attemptId: attempt.id,
     examId: attempt.examId,
@@ -396,7 +427,7 @@ export function loadAttemptResult(
     durationMs: Math.max(0, submittedAt - attempt.startedAt),
     serverNow: now,
     canReveal,
-    revealAt: exam.answerRevealPolicy === 'immediate' ? submittedAt : exam.endsAt,
+    revealAt,
     revealMode: exam.answerRevealPolicy,
     answers: answerMapFromRows(rows),
     questions: canReveal ? questionResults(questions, rows) : null,

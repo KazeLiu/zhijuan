@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { rm } from 'node:fs/promises'
 import type {
   AnswerRevealPolicy,
+  AvailableExamsDTO,
   CurrentExamDTO,
   ExamAdminDTO,
   ExamListRowDTO,
@@ -22,20 +23,23 @@ import {
   MAX_EXTRA_PROMPT_CHARS,
   SCORE_TOTAL_UNITS,
 } from '../../shared/constants'
-import { defaultExamTitle } from '../../shared/utils/exam'
+import { defaultExamTitle, effectiveEndsAt } from '../../shared/utils/exam'
 import {
   countAttemptsOfExam,
   countQuestionsOfExam,
   deleteExamRow,
+  endExamRow,
   findExam,
   findLatestClosedExam,
   findNextExam,
   findOpenExam,
-  findOverlappingPublished,
+  listAvailableExams,
   examPhase,
   insertExam,
   listExams,
+  pauseExamRow,
   publishExamRow,
+  resumeExamRow,
   unpublishExamRow,
   updateExamDraft,
   type ExamListRow,
@@ -48,7 +52,7 @@ import { listQuestions, toQuestionAdminDTOs } from '../db/queries/questions'
 import { findAttemptByName, type AttemptRecord } from '../db/queries/attempts'
 import { ApiFailure, throwApi } from '../utils/respond'
 import { withTransaction } from '../utils/db'
-import { FieldErrors, isPlainObject, readExpectedVersion } from '../utils/validate'
+import { FieldErrors, isPlainObject, readExpectedVersion, readOptionalExpectedVersion } from '../utils/validate'
 import { parseIsoInstant, parseTimeZone, startOfDayInZone, startOfNextDayInZone } from '../utils/time'
 import { getStorageRoot } from '../utils/paths'
 import { countByType, findStoredQuestionIssue, questionCountValid } from './questions'
@@ -76,6 +80,8 @@ export function toExamListRowDTO(row: ExamListRow): ExamListRowDTO {
     phase: examPhase(row.exam, Date.now()),
     startsAt: row.exam.startsAt,
     endsAt: row.exam.endsAt,
+    pausedAt: row.exam.pausedAt,
+    endedAt: row.exam.endedAt,
     timeZone: row.exam.timeZone,
     answerRevealPolicy: row.exam.answerRevealPolicy,
     questionCount: row.questionCount,
@@ -97,13 +103,12 @@ function refsValid(db: DatabaseSync, examId: string, questionIndex: number, refs
   }
 }
 
-/** 八项预检：前端按 code 渲染预检面板，不通过时不落库 */
+/** 七项预检：前端按 code 渲染预检面板，不通过时不落库（时间重叠校验已按契约 §10.1 取消） */
 export function buildPublishChecklist(db: DatabaseSync, exam: ExamRow, now: number): PublishChecklistItem[] {
   const questions = listQuestions(db, exam.id)
   const counts = countByType(questions)
   const blueprint = exam.blueprint
   const totalUnits = questions.reduce((sum, question) => sum + question.maxScoreUnits, 0)
-  const conflicts = findOverlappingPublished(db, exam.startsAt, exam.endsAt, exam.id)
   const activeJob = findActiveJob(db, exam.id)
 
   const structureProblems: string[] = []
@@ -176,15 +181,6 @@ export function buildPublishChecklist(db: DatabaseSync, exam: ExamRow, now: numb
       ok: !activeJob,
       message: activeJob ? '出题任务进行中，请等待完成' : '无进行中的出题任务',
     },
-    {
-      code: 'time_conflict',
-      ok: conflicts.length === 0,
-      message:
-        conflicts.length === 0
-          ? '与其他场次无时间冲突'
-          : `与 ${conflicts.length} 场已发布考试时间重叠：${conflicts.map((item) => item.title).join('、')}`,
-      hint: conflicts.length > 0 ? '调整本场时间或先撤回冲突场次' : undefined,
-    },
   ]
 }
 
@@ -202,6 +198,9 @@ export function getExamAdminDTO(db: DatabaseSync, examId: string, now: number): 
     phase: examPhase(exam, now),
     startsAt: exam.startsAt,
     endsAt: exam.endsAt,
+    pausedAt: exam.pausedAt,
+    endedAt: exam.endedAt,
+    effectiveEndsAt: effectiveEndsAt(exam.endsAt, exam.endedAt),
     timeZone: exam.timeZone,
     answerRevealPolicy: exam.answerRevealPolicy,
     blueprint: exam.blueprint,
@@ -288,13 +287,30 @@ function assertDraftEditable(db: DatabaseSync, exam: ExamRow): void {
   }
 }
 
-/** 修改草稿（§8.5 18）：时间冲突允许保存，只在预检中标记 */
+/**
+ * 内容编辑守卫（契约 §3.3）：草稿可改，暂停中也可改基本信息；
+ * 未暂停的已发布场次与已结束场次一律 EXAM_LOCKED。
+ */
+function assertContentEditable(db: DatabaseSync, exam: ExamRow): void {
+  const paused = exam.pausedAt !== null && exam.endedAt === null
+  if (exam.status !== 'draft' && !paused) {
+    if (exam.endedAt !== null) {
+      throwApi('EXAM_LOCKED', '场次已结束，不能修改', { reason: 'ended' })
+    }
+    throwApi('EXAM_LOCKED', '已发布的场次不能修改，请先暂停', { reason: 'published' })
+  }
+  if (findActiveJob(db, exam.id)) {
+    throwApi('EXAM_HAS_ACTIVE_JOB', '出题任务进行中，暂不能修改场次')
+  }
+}
+
+/** 修改场次（§8.5 18、契约 §3.3）：草稿与暂停中可改；时间冲突允许保存，只在预检中标记 */
 export function updateExam(db: DatabaseSync, examId: string, body: Record<string, unknown>, now: number): ExamRow {
   const expectedVersion = readExpectedVersion(body)
   return withTransaction(db, () => {
     const exam = findExam(db, examId)
     if (!exam) throw new ApiFailure('NOT_FOUND', '考试场次不存在')
-    assertDraftEditable(db, exam)
+    assertContentEditable(db, exam)
     if (exam.version !== expectedVersion) {
       throwApi('VERSION_CONFLICT', '场次已被更新，请刷新后重试', { serverVersion: exam.version })
     }
@@ -362,25 +378,13 @@ export async function deleteExam(db: DatabaseSync, examId: string): Promise<void
   }
 }
 
-/** 发布（§8.5 25）：八项预检全过才落库；时间冲突优先返回 409 */
+/** 发布（§8.5 25）：七项预检全过才落库；同一时段允许多场同时开放（契约 §10.1） */
 export function publishExam(db: DatabaseSync, examId: string, now: number): ExamRow {
   return withTransaction(db, () => {
     const exam = findExam(db, examId)
     if (!exam) throw new ApiFailure('NOT_FOUND', '考试场次不存在')
     if (exam.status !== 'draft') {
       throwApi('EXAM_LOCKED', '该场次已经发布', { reason: 'published' })
-    }
-    const conflicts = findOverlappingPublished(db, exam.startsAt, exam.endsAt, examId)
-    if (conflicts.length > 0) {
-      throwApi('EXAM_TIME_CONFLICT', '与已发布场次时间冲突', {
-        conflicts: conflicts.map((item) => ({
-          examId: item.id,
-          title: item.title,
-          startsAt: item.startsAt,
-          endsAt: item.endsAt,
-          timeZone: item.timeZone,
-        })),
-      })
     }
     const checks = buildPublishChecklist(db, exam, now)
     if (checks.some((item) => !item.ok)) {
@@ -413,6 +417,93 @@ export function unpublishExam(db: DatabaseSync, examId: string, now: number): Ex
     if (!updated) throw new ApiFailure('INTERNAL_ERROR', '撤回后无法读取场次')
     return updated
   })
+}
+
+/* ------------------------------ 生命周期动作（契约 §3.1） ------------------------------ */
+
+type LifecycleAction = 'pause' | 'resume' | 'end'
+
+/** 状态前置条件：顺序即错误码优先级，已结束优先于已暂停 */
+function assertLifecycleAllowed(exam: ExamRow, action: LifecycleAction): void {
+  if (exam.status !== 'published') {
+    throwApi('EXAM_NOT_PUBLISHED', '该场次不是已发布状态', { status: exam.status })
+  }
+  if (exam.endedAt !== null) {
+    throwApi('EXAM_ALREADY_ENDED', '该场次已结束', { endedAt: exam.endedAt })
+  }
+  if (action === 'pause' && exam.pausedAt !== null) {
+    throwApi('EXAM_ALREADY_PAUSED', '该场次已暂停', { pausedAt: exam.pausedAt })
+  }
+  if (action === 'resume' && exam.pausedAt === null) {
+    throwApi('EXAM_NOT_PAUSED', '该场次当前未暂停')
+  }
+}
+
+/**
+ * 三个生命周期动作共用的写入流程：状态校验 → 可选版本校验 → `WHERE ... AND version = ?` 落库。
+ * 请求体可省略（也可带 expectedVersion 做乐观锁）；落库时始终用事务内读到的版本，避免丢失更新。
+ */
+function runLifecycle(
+  db: DatabaseSync,
+  examId: string,
+  body: Record<string, unknown>,
+  now: number,
+  action: LifecycleAction,
+): ExamRow {
+  const expectedVersion = readOptionalExpectedVersion(body)
+  return withTransaction(db, () => {
+    const exam = findExam(db, examId)
+    if (!exam) throw new ApiFailure('NOT_FOUND', '考试场次不存在')
+    assertLifecycleAllowed(exam, action)
+    if (expectedVersion !== undefined && expectedVersion !== exam.version) {
+      throwApi('VERSION_CONFLICT', '场次已被更新，请刷新后重试', { serverVersion: exam.version })
+    }
+    const changes =
+      action === 'pause'
+        ? pauseExamRow(db, examId, exam.version, now)
+        : action === 'resume'
+          ? resumeExamRow(db, examId, exam.version, now)
+          : endExamRow(db, examId, exam.version, now)
+    if (changes === 0) {
+      // WHERE 未命中：要么状态在此之间变了（给出精确错误码），要么版本过期
+      const latest = findExam(db, examId)
+      if (latest) assertLifecycleAllowed(latest, action)
+      throwApi('VERSION_CONFLICT', '场次已被更新，请刷新后重试', { serverVersion: latest?.version ?? exam.version })
+    }
+    const updated = findExam(db, examId)
+    if (!updated) throw new ApiFailure('INTERNAL_ERROR', '场次更新后无法读取')
+    return updated
+  })
+}
+
+/** 暂停（契约 §3.1）：未开始或开放中均可暂停；暂停后不接受新答卷 */
+export function pauseExam(
+  db: DatabaseSync,
+  examId: string,
+  body: Record<string, unknown>,
+  now: number,
+): ExamRow {
+  return runLifecycle(db, examId, body, now, 'pause')
+}
+
+/** 继续（契约 §3.1）：恢复为新答卷可进入的状态；进行中的答卷本就不受影响 */
+export function resumeExam(
+  db: DatabaseSync,
+  examId: string,
+  body: Record<string, unknown>,
+  now: number,
+): ExamRow {
+  return runLifecycle(db, examId, body, now, 'resume')
+}
+
+/** 提前结束（契约 §3.1）：任意阶段都可结束；进行中的答卷仍可保存与交卷 */
+export function endExam(
+  db: DatabaseSync,
+  examId: string,
+  body: Record<string, unknown>,
+  now: number,
+): ExamRow {
+  return runLifecycle(db, examId, body, now, 'end')
 }
 
 export function listExamRows(
@@ -469,4 +560,26 @@ export function buildCurrentExam(db: DatabaseSync, nameKey: string, now: number)
     }
   }
   return { serverNow: now, phase: 'none', exam: null, nextExam: null, myAttempt: null }
+}
+
+/**
+ * 考生可选场次列表（契约 §10.2）：已发布、未暂停、未提前结束、未截止。
+ * 同一时段可同时开放多场，由考生自选；open 在前、upcoming 在后，各按开始时间升序。
+ */
+export function buildAvailableExams(db: DatabaseSync, nameKey: string, now: number): AvailableExamsDTO {
+  const rows = listAvailableExams(db, now, nameKey)
+  return {
+    items: rows.map((row) => ({
+      id: row.exam.id,
+      title: row.exam.title,
+      startsAt: row.exam.startsAt,
+      endsAt: row.exam.endsAt,
+      timeZone: row.exam.timeZone,
+      phase: now >= row.exam.startsAt ? 'open' : 'upcoming',
+      questionCount: row.questionCount,
+      myAttempt: row.attempt
+        ? { id: row.attempt.id, status: row.attempt.status, submittedAt: row.attempt.submittedAt }
+        : null,
+    })),
+  }
 }

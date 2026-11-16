@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { EMPTY_BLUEPRINT } from '../../../shared/types/exam'
 import type { AnswerRevealPolicy, BlueprintDTO, ExamPhase, ExamStatus } from '../../../shared/types/exam'
+import { computeExamPhase } from '../../../shared/utils/exam'
 
 /** exams 表行（列名 → 驼峰映射后的领域对象） */
 export interface ExamRow {
@@ -10,6 +11,10 @@ export interface ExamRow {
   status: ExamStatus
   startsAt: number
   endsAt: number
+  /** 暂停时刻；非空 = 已暂停（契约 §1） */
+  pausedAt: number | null
+  /** 管理员提前结束时刻；非空 = 已结束（契约 §1） */
+  endedAt: number | null
   timeZone: string
   answerRevealPolicy: AnswerRevealPolicy
   blueprint: BlueprintDTO
@@ -34,6 +39,8 @@ interface RawExamRow {
   status: string
   starts_at: number
   ends_at: number
+  paused_at: number | null
+  ended_at: number | null
   time_zone: string
   answer_reveal_policy: string
   blueprint_json: string
@@ -76,6 +83,8 @@ function mapExamRow(row: RawExamRow): ExamRow {
     status: row.status === 'published' ? 'published' : 'draft',
     startsAt: Number(row.starts_at),
     endsAt: Number(row.ends_at),
+    pausedAt: row.paused_at === null || row.paused_at === undefined ? null : Number(row.paused_at),
+    endedAt: row.ended_at === null || row.ended_at === undefined ? null : Number(row.ended_at),
     timeZone: row.time_zone,
     answerRevealPolicy: row.answer_reveal_policy === 'after_exam' ? 'after_exam' : 'immediate',
     blueprint: parseBlueprint(row.blueprint_json),
@@ -86,16 +95,25 @@ function mapExamRow(row: RawExamRow): ExamRow {
   }
 }
 
-/** 场次阶段（§7.5）：upcoming/open/closed 是计算值，不入库 */
-export function examPhase(exam: { status: ExamStatus; startsAt: number; endsAt: number }, now: number): ExamPhase {
-  if (exam.status === 'draft') return 'draft'
-  if (now < exam.startsAt) return 'upcoming'
-  if (now < exam.endsAt) return 'open'
-  return 'closed'
+/**
+ * 场次阶段（§7.5）：upcoming/open/paused/closed 是计算值，不入库。
+ * 统一委托 shared/utils/exam.ts 的 computeExamPhase，保证「已结束优先于已暂停」只有一处实现。
+ */
+export function examPhase(
+  exam: {
+    status: ExamStatus
+    startsAt: number
+    endsAt: number
+    pausedAt: number | null
+    endedAt: number | null
+  },
+  now: number,
+): ExamPhase {
+  return computeExamPhase(exam.status, exam.startsAt, exam.endsAt, now, exam.pausedAt, exam.endedAt)
 }
 
-const EXAM_COLUMNS = `id, title, instructions, status, starts_at, ends_at, time_zone, answer_reveal_policy,
-  blueprint_json, version, published_at, created_at, updated_at`
+const EXAM_COLUMNS = `id, title, instructions, status, starts_at, ends_at, paused_at, ended_at, time_zone,
+  answer_reveal_policy, blueprint_json, version, published_at, created_at, updated_at`
 
 /** 按 id 读场次（不存在返回 undefined） */
 export function findExam(db: DatabaseSync, id: string): ExamRow | undefined {
@@ -150,57 +168,90 @@ export function listExams(db: DatabaseSync, filter: ExamListFilter): { rows: Exa
   }
 }
 
-/** 已发布且当前开放中的场次（§7.5：startsAt <= now < endsAt） */
+/** 已发布且当前开放中的场次（§7.5：startsAt <= now < endsAt；暂停/已结束不算开放） */
 export function findOpenExam(db: DatabaseSync, now: number): ExamRow | undefined {
   const row = db
     .prepare(
       `SELECT ${EXAM_COLUMNS} FROM exams
-       WHERE status = 'published' AND starts_at <= ? AND ends_at > ?
+       WHERE status = 'published' AND paused_at IS NULL AND ended_at IS NULL
+         AND starts_at <= ? AND ends_at > ?
        ORDER BY starts_at ASC, id ASC LIMIT 1`,
     )
     .get(now, now) as RawExamRow | undefined
   return row ? mapExamRow(row) : undefined
 }
 
-/** 下一场未开始的已发布场次 */
+/** 下一场未开始的已发布场次（暂停/提前结束的不作为推荐） */
 export function findNextExam(db: DatabaseSync, now: number): ExamRow | undefined {
   const row = db
     .prepare(
       `SELECT ${EXAM_COLUMNS} FROM exams
-       WHERE status = 'published' AND starts_at > ?
+       WHERE status = 'published' AND paused_at IS NULL AND ended_at IS NULL AND starts_at > ?
        ORDER BY starts_at ASC, id ASC LIMIT 1`,
     )
     .get(now) as RawExamRow | undefined
   return row ? mapExamRow(row) : undefined
 }
 
-/** 最近刚结束的已发布场次（endsAt <= now） */
+/** 最近刚结束的已发布场次（按实际结束时刻，含管理员提前结束） */
 export function findLatestClosedExam(db: DatabaseSync, now: number): ExamRow | undefined {
   const row = db
     .prepare(
       `SELECT ${EXAM_COLUMNS} FROM exams
-       WHERE status = 'published' AND ends_at <= ?
-       ORDER BY ends_at DESC, id DESC LIMIT 1`,
+       WHERE status = 'published' AND (ended_at IS NOT NULL OR ends_at <= ?)
+       ORDER BY CASE WHEN ended_at IS NOT NULL AND ended_at < ends_at THEN ended_at ELSE ends_at END DESC,
+         id DESC
+       LIMIT 1`,
     )
     .get(now) as RawExamRow | undefined
   return row ? mapExamRow(row) : undefined
 }
 
-/** 与给定时间窗重叠的已发布场次（半开区间，§7.5） */
-export function findOverlappingPublished(
-  db: DatabaseSync,
-  startsAt: number,
-  endsAt: number,
-  excludeId: string,
-): ExamRow[] {
+/** 考生可选场次行（契约 §10.2） */
+export interface AvailableExamRow {
+  exam: ExamRow
+  questionCount: number
+  attempt: { id: string; status: 'in_progress' | 'submitted'; submittedAt: number | null } | null
+}
+
+/**
+ * 考生可选场次：已发布、未暂停、未提前结束、未截止；open 在前、upcoming 在后，各按 starts_at 升序。
+ * 同一时段允许多场（契约 §10.1 取消时间重叠校验），靠考生自选区分。
+ */
+export function listAvailableExams(db: DatabaseSync, now: number, nameKey: string): AvailableExamRow[] {
+  const columns = EXAM_COLUMNS.split(',')
+    .map((column) => `e.${column.trim()}`)
+    .join(', ')
   const rows = db
     .prepare(
-      `SELECT ${EXAM_COLUMNS} FROM exams
-       WHERE status = 'published' AND id <> ? AND starts_at < ? AND ends_at > ?
-       ORDER BY starts_at ASC, id ASC`,
+      `SELECT ${columns},
+        (SELECT COUNT(*) FROM questions q WHERE q.exam_id = e.id) AS question_count,
+        a.id AS attempt_id, a.status AS attempt_status, a.submitted_at AS attempt_submitted_at
+       FROM exams e
+       LEFT JOIN attempts a ON a.exam_id = e.id AND a.name_key = ?
+       WHERE e.status = 'published' AND e.paused_at IS NULL AND e.ended_at IS NULL AND e.ends_at > ?
+       ORDER BY CASE WHEN e.starts_at <= ? THEN 0 ELSE 1 END, e.starts_at ASC, e.id ASC`,
     )
-    .all(excludeId, endsAt, startsAt) as unknown as RawExamRow[]
-  return rows.map(mapExamRow)
+    .all(nameKey, now, now) as unknown as (RawExamRow & {
+      attempt_id?: string | null
+      attempt_status?: string | null
+      attempt_submitted_at?: number | null
+    })[]
+  return rows.map((row) => {
+    const attemptId = row.attempt_id ?? null
+    const submittedAt = row.attempt_submitted_at ?? null
+    return {
+      exam: mapExamRow(row),
+      questionCount: Number(row.question_count ?? 0),
+      attempt: attemptId
+        ? {
+            id: attemptId,
+            status: row.attempt_status === 'submitted' ? 'submitted' : 'in_progress',
+            submittedAt: submittedAt === null ? null : Number(submittedAt),
+          }
+        : null,
+    }
+  })
 }
 
 /** 已发布场次总数（概览用） */
@@ -288,16 +339,59 @@ export function publishExamRow(db: DatabaseSync, id: string, now: number): void 
   ).run(now, now, id)
 }
 
-/** 撤回：回到草稿 */
+/** 撤回：回到草稿；生命周期标记一并清空，否则重新发布后会直接变成「暂停中/已结束」 */
 export function unpublishExamRow(db: DatabaseSync, id: string, now: number): void {
   db.prepare(
-    "UPDATE exams SET status = 'draft', published_at = NULL, version = version + 1, updated_at = ? WHERE id = ? AND status = 'published'",
+    "UPDATE exams SET status = 'draft', published_at = NULL, paused_at = NULL, ended_at = NULL, version = version + 1, updated_at = ? WHERE id = ? AND status = 'published'",
   ).run(now, id)
 }
 
 /** 仅递增版本（题目/资料等从属写入后同步场次版本） */
 export function touchExamVersion(db: DatabaseSync, id: string, now: number): void {
   db.prepare('UPDATE exams SET version = version + 1, updated_at = ? WHERE id = ?').run(now, id)
+}
+
+/**
+ * 生命周期动作（契约 §3.1）：状态前置条件与版本校验都在 SQL 的 WHERE 里，
+ * 返回受影响行数，0 表示前置条件不满足或版本已过期（调用方区分后抛错）。
+ */
+function runLifecycleUpdate(
+  db: DatabaseSync,
+  sql: string,
+  params: Array<string | number | null>,
+): number {
+  const result = db.prepare(sql).run(...params)
+  return Number(result.changes)
+}
+
+/** 暂停：published 且未结束、未暂停 */
+export function pauseExamRow(db: DatabaseSync, id: string, expectedVersion: number, now: number): number {
+  return runLifecycleUpdate(
+    db,
+    `UPDATE exams SET paused_at = ?, version = version + 1, updated_at = ?
+     WHERE id = ? AND version = ? AND status = 'published' AND paused_at IS NULL AND ended_at IS NULL`,
+    [now, now, id, expectedVersion],
+  )
+}
+
+/** 继续：published 且已暂停、未结束 */
+export function resumeExamRow(db: DatabaseSync, id: string, expectedVersion: number, now: number): number {
+  return runLifecycleUpdate(
+    db,
+    `UPDATE exams SET paused_at = NULL, version = version + 1, updated_at = ?
+     WHERE id = ? AND version = ? AND status = 'published' AND paused_at IS NOT NULL AND ended_at IS NULL`,
+    [now, id, expectedVersion],
+  )
+}
+
+/** 提前结束：published 且未结束（任意阶段，含暂停中）；保留 paused_at 作为历史 */
+export function endExamRow(db: DatabaseSync, id: string, expectedVersion: number, now: number): number {
+  return runLifecycleUpdate(
+    db,
+    `UPDATE exams SET ended_at = ?, version = version + 1, updated_at = ?
+     WHERE id = ? AND version = ? AND status = 'published' AND ended_at IS NULL`,
+    [now, now, id, expectedVersion],
+  )
 }
 
 export function deleteExamRow(db: DatabaseSync, id: string): void {

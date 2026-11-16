@@ -91,9 +91,10 @@ async function bootstrap(): Promise<void> {
   loading.value = true
   loadError.value = ''
   try {
-    // 显式进入答题页后创建或续用答卷；刷新时沿用原开始时间。
+    // 契约 §10.2：start 必须带 examId（同时段可能有多场考试，由考生自选场次进入）；刷新时沿用原开始时间。
     const started = await apiFetch<AttemptStartResult>('/api/attempts/start', {
       method: 'POST',
+      body: { examId: examIdParam.value },
       silent: true,
     })
     if (started.status === 'submitted') {

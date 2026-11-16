@@ -1,14 +1,26 @@
 <script setup lang="ts">
 /**
- * 入口页（设计 §6.1、契约 §9.1）：
- * 未登录 → 姓名登录卡片；考生登录后展示考试安排，点击后才开始答题。
+ * 入口页（设计 §6.1、契约 §9.1 + docs/lifecycle-contract.md §10.2）：
+ * 未登录 → 姓名登录卡片；考生登录后展示「可参加的场次列表」，自己选场次后才开始答题。
+ * 已暂停、已结束、已截止的场次由服务端过滤，不会出现在列表中。
  */
-import type { AttemptStartResult, CurrentExamDTO, LoginResultDTO, SessionDTO } from '#shared/types'
+import type {
+  AttemptStartResult,
+  AvailableExamItemDTO,
+  AvailableExamsDTO,
+  LoginResultDTO,
+  SessionDTO,
+} from '#shared/types'
 
 useHead({ title: '知卷 · 姓名进入' })
 
+/** 考生可选场次列表中的单场次（GET /api/exams/available，契约 §10.2） */
+type AvailableExamItem = AvailableExamItemDTO
+type AvailableExamAttempt = NonNullable<AvailableExamItemDTO['myAttempt']>
+
 const { session, logout } = useAuthSession()
-const starting = ref(false)
+/** 正在开始的场次 id：只锁当前卡片，其余卡片保持可点 */
+const startingId = ref('')
 const startError = ref('')
 
 const { data: sessionData, error: sessionError, pending: sessionPending, refresh: reloadSession } =
@@ -22,40 +34,50 @@ watchEffect(() => {
 })
 
 const authenticated = computed(() => session.value?.authenticated === true)
+const isCandidate = computed(() => authenticated.value && session.value?.role === 'candidate')
 
 const {
-  data: current,
-  error: currentError,
-  pending: currentPending,
-  refresh: reloadCurrent,
-} = await useAsyncData<CurrentExamDTO>(
-  'zj-current-exam',
-  () => apiFetch<CurrentExamDTO>('/api/exams/current', { silent: true }),
-  { server: true, immediate: authenticated.value && session.value?.role === 'candidate' },
+  data: available,
+  error: availableError,
+  pending: availablePending,
+  refresh: reloadAvailable,
+} = await useAsyncData<AvailableExamsDTO>(
+  'zj-available-exams',
+  () => apiFetch<AvailableExamsDTO>('/api/exams/available', { silent: true }),
+  { server: true, immediate: isCandidate.value },
 )
 
-const currentErrorText = computed(() => (currentError.value ? describeApiError(currentError.value, '无法获取考试信息') : ''))
+const exams = computed<AvailableExamItem[]>(() => available.value?.items ?? [])
+const availableErrorText = computed(() =>
+  availableError.value ? describeApiError(availableError.value, '无法获取考试列表') : '',
+)
 
-const nextExamText = computed(() => {
-  const next = current.value?.nextExam
-  if (!next) return ''
-  return `${formatDateTime(next.startsAt, next.timeZone)} — ${formatDateTime(next.endsAt, next.timeZone)}`
-})
+function phaseText(phase: AvailableExamItem['phase']): string {
+  return phase === 'open' ? '开放中' : '未开始'
+}
 
-const closedExamText = computed(() => {
-  const exam = current.value?.exam
-  if (!exam) return ''
-  return `${exam.title}（已于 ${formatDateTime(exam.endsAt, exam.timeZone)} 结束）`
-})
+function phaseTagType(phase: AvailableExamItem['phase']): 'success' | 'warning' {
+  return phase === 'open' ? 'success' : 'warning'
+}
 
-const myAttempt = computed(() => current.value?.myAttempt ?? null)
+function attemptText(status: AvailableExamAttempt['status']): string {
+  return status === 'submitted' ? '已交卷' : '作答中'
+}
 
-/** 登录/切换身份后重新取会话与场次，避免旧缓存 */
+function windowText(item: AvailableExamItem): string {
+  return `${formatDateTime(item.startsAt, item.timeZone)} — ${formatDateTime(item.endsAt, item.timeZone)}`
+}
+
+function upcomingHint(item: AvailableExamItem): string {
+  return `未开始，将于 ${formatDateTime(item.startsAt, item.timeZone)} 开放（${item.timeZone}）`
+}
+
+/** 登录/切换身份后重新取会话与场次列表，避免旧缓存 */
 async function reloadAll(): Promise<void> {
   clearNuxtData()
   await reloadSession()
   session.value = sessionData.value ?? null
-  if (session.value?.role === 'candidate') await reloadCurrent()
+  if (session.value?.role === 'candidate') await reloadAvailable()
 }
 
 async function handleLoggedIn(result: LoginResultDTO): Promise<void> {
@@ -70,7 +92,7 @@ async function handleLoggedIn(result: LoginResultDTO): Promise<void> {
     await navigateTo(result.landing)
     return
   }
-  await reloadCurrent()
+  await reloadAvailable()
 }
 
 async function handleLogout(): Promise<void> {
@@ -78,16 +100,15 @@ async function handleLogout(): Promise<void> {
   await reloadAll()
 }
 
-/** 点击开始后才创建答卷并计时。 */
-async function startAttempt(): Promise<void> {
-  const exam = current.value?.exam
-  if (!exam || starting.value) return
-  starting.value = true
+/** 点击具体场次的「进入考试」才创建答卷并计时（契约 §10.2：必须带 examId） */
+async function enterExam(item: AvailableExamItem): Promise<void> {
+  if (startingId.value) return
+  startingId.value = item.id
   startError.value = ''
   try {
-    // 契约 §8.3：POST /api/attempts/start 无请求体
     const started = await apiFetch<AttemptStartResult>('/api/attempts/start', {
       method: 'POST',
+      body: { examId: item.id },
       silent: true,
     })
     if (started.status === 'submitted') {
@@ -98,7 +119,7 @@ async function startAttempt(): Promise<void> {
   } catch (error) {
     startError.value = describeApiError(error, '无法开始考试，请稍后重试')
   } finally {
-    starting.value = false
+    startingId.value = ''
   }
 }
 </script>
@@ -162,98 +183,113 @@ async function startAttempt(): Promise<void> {
       </el-card>
 
       <el-card v-if="session?.role !== 'admin'" shadow="never" class="entry__card">
-        <StatePanel
-          v-if="currentError"
-          state="error"
-          title="无法获取考试信息"
-          :description="currentErrorText"
-          @retry="reloadCurrent()"
+        <template #header>
+          <div class="entry__list-head">
+            <span class="entry__list-title">可参加的考试</span>
+            <div class="entry__identity-actions">
+              <NuxtLink to="/my-attempts">
+                <el-button text size="small">我的记录</el-button>
+              </NuxtLink>
+              <el-button text size="small" :loading="availablePending" @click="reloadAvailable()">刷新</el-button>
+            </div>
+          </div>
+        </template>
+
+        <el-alert
+          v-if="startError"
+          type="error"
+          :closable="false"
+          show-icon
+          :title="startError"
+          class="entry__inline-alert"
         />
 
-        <StatePanel v-else-if="currentPending || !current" state="loading" title="正在获取考试安排…" :loading-rows="3" />
+        <StatePanel
+          v-if="availableError"
+          state="error"
+          title="无法获取考试列表"
+          :description="availableErrorText"
+          @retry="reloadAvailable()"
+        />
 
-        <div v-else class="entry__panel">
-          <!-- 开放中 -->
-          <template v-if="current?.phase === 'open' && current.exam">
-            <h2 class="entry__panel-title">{{ current.exam.title }}</h2>
-            <p class="entry__panel-meta zj-muted">
-              {{ formatDateTime(current.exam.startsAt, current.exam.timeZone) }} —
-              {{ formatDateTime(current.exam.endsAt, current.exam.timeZone) }}
-              （{{ current.exam.timeZone }}）
-            </p>
-            <p class="entry__panel-text zj-muted">
-              {{ current.exam.instructions || '点击“开始答题”后计时，交卷后立即出分。' }}
-            </p>
+        <StatePanel
+          v-else-if="availablePending && !available"
+          state="loading"
+          title="正在获取考试列表…"
+          :loading-rows="3"
+        />
 
-            <el-alert
-              v-if="startError"
-              type="error"
-              :closable="false"
-              show-icon
-              :title="startError"
-              class="entry__inline-alert"
-            />
+        <StatePanel
+          v-else-if="exams.length === 0"
+          state="empty"
+          title="暂无进行中的考试"
+          description="管理员发布场次后会出现在这里；已暂停或已结束的场次不再显示。"
+        >
+          <template #default>
+            <NuxtLink to="/my-attempts">
+              <el-button size="large">查看我的记录</el-button>
+            </NuxtLink>
+          </template>
+        </StatePanel>
 
-            <div class="entry__actions">
-              <template v-if="!myAttempt">
-                <el-button type="primary" size="large" :loading="starting" @click="startAttempt">
-                  开始答题
-                </el-button>
-              </template>
-              <template v-else-if="myAttempt.status === 'in_progress'">
-                <NuxtLink :to="`/exams/${current.exam.id}/attempt`">
-                  <el-button type="primary" size="large">继续答题</el-button>
-                </NuxtLink>
-                <span class="entry__hint zj-muted">
-                  已于 {{ formatDateTimeSeconds(myAttempt.startedAt, current.exam.timeZone) }} 开始计时
-                </span>
-              </template>
-              <template v-else>
-                <NuxtLink :to="`/attempts/${myAttempt.attemptId}/result`">
-                  <el-button type="primary" size="large">查看成绩</el-button>
-                </NuxtLink>
-                <span class="entry__hint zj-muted">
-                  已交卷 · 得分 {{ formatScoreUnits(myAttempt.totalScoreUnits) }} 分
-                </span>
-              </template>
-              <NuxtLink to="/my-attempts">
-                <el-button size="large">我的记录</el-button>
-              </NuxtLink>
+        <ul v-else class="entry__exams">
+          <li
+            v-for="item in exams"
+            :key="item.id"
+            class="entry__exam"
+            :class="{ 'is-upcoming': item.phase === 'upcoming' }"
+          >
+            <div class="entry__exam-main">
+              <div class="entry__exam-head">
+                <h2 class="entry__exam-title">{{ item.title || '未命名考试' }}</h2>
+                <div class="entry__exam-tags">
+                  <el-tag :type="phaseTagType(item.phase)" effect="plain" size="small">
+                    {{ phaseText(item.phase) }}
+                  </el-tag>
+                  <el-tag
+                    v-if="item.myAttempt"
+                    :type="item.myAttempt.status === 'submitted' ? 'info' : 'warning'"
+                    effect="plain"
+                    size="small"
+                  >
+                    {{ attemptText(item.myAttempt.status) }}
+                  </el-tag>
+                </div>
+              </div>
+              <p class="entry__exam-meta zj-muted">
+                {{ windowText(item) }}（{{ item.timeZone }}）· 共 {{ item.questionCount }} 题
+              </p>
+              <p v-if="item.phase === 'upcoming'" class="entry__exam-hint zj-muted">
+                {{ upcomingHint(item) }}
+              </p>
             </div>
-          </template>
 
-          <!-- 未开始 -->
-          <template v-else-if="current?.phase === 'upcoming'">
-            <h2 class="entry__panel-title">暂无进行中的考试</h2>
-            <p v-if="current.nextExam" class="entry__panel-text">
-              下一场：<strong>{{ current.nextExam.title }}</strong><br >
-              <span class="zj-muted">{{ nextExamText }}（{{ current.nextExam.timeZone }}）</span>
-            </p>
-            <p v-else class="entry__panel-text zj-muted">暂时没有已安排的场次，请稍后再来。</p>
-          </template>
-
-          <!-- 已结束 -->
-          <template v-else-if="current?.phase === 'closed'">
-            <h2 class="entry__panel-title">本场考试已结束</h2>
-            <p class="entry__panel-text zj-muted">{{ closedExamText }}</p>
-            <div class="entry__actions">
-              <NuxtLink to="/my-attempts">
-                <el-button type="primary" size="large">查看我的记录</el-button>
+            <div class="entry__exam-actions">
+              <NuxtLink
+                v-if="item.myAttempt?.status === 'submitted'"
+                :to="`/attempts/${item.myAttempt?.id}/result`"
+              >
+                <el-button type="primary">已交卷 · 查看成绩</el-button>
               </NuxtLink>
-            </div>
-          </template>
-
-          <!-- 无场次 -->
-          <template v-else>
-            <h2 class="entry__panel-title">暂无考试安排</h2>
-            <p class="entry__panel-text zj-muted">管理员还没有发布可参加的场次，请稍后再来。</p>
-            <div class="entry__actions">
-              <NuxtLink to="/my-attempts">
-                <el-button size="large">我的记录</el-button>
+              <NuxtLink
+                v-else-if="item.myAttempt?.status === 'in_progress'"
+                :to="`/exams/${item.id}/attempt`"
+              >
+                <el-button type="primary">继续作答</el-button>
               </NuxtLink>
+              <el-button
+                v-else-if="item.phase === 'open'"
+                type="primary"
+                :loading="startingId === item.id"
+                :disabled="Boolean(startingId) && startingId !== item.id"
+                @click="enterExam(item)"
+              >
+                进入考试
+              </el-button>
+              <el-button v-else disabled>进入考试</el-button>
             </div>
-          </template>
-        </div>
+          </li>
+        </ul>
       </el-card>
     </template>
   </section>
@@ -306,6 +342,83 @@ async function startAttempt(): Promise<void> {
 
 .entry__identity-actions {
   display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.entry__list-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.entry__list-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.entry__exams {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.entry__exam {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--zj-border);
+  border-radius: 8px;
+}
+
+.entry__exam.is-upcoming {
+  background: var(--el-fill-color-lighter);
+}
+
+.entry__exam-main {
+  flex: 1 1 300px;
+  min-width: 0;
+}
+
+.entry__exam-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.entry__exam-title {
+  margin: 0;
+  font-size: 17px;
+}
+
+.entry__exam-tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.entry__exam-meta {
+  margin: 6px 0 0;
+  font-size: 14px;
+}
+
+.entry__exam-hint {
+  margin: 4px 0 0;
+  font-size: 14px;
+}
+
+.entry__exam-actions {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
 }

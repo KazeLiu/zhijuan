@@ -25,9 +25,11 @@ import { QUESTION_TYPE_LABELS } from '#shared/types'
 interface Props {
   exam: ExamAdminDTO
   locked?: boolean
+  /** 暂停态：题干/选项/答案/解析与排序可改，增删题目与改题型锁定（EXAM_STRUCTURE_LOCKED） */
+  structureLocked?: boolean
   externalBusy?: boolean
 }
-const props = withDefaults(defineProps<Props>(), { locked: false, externalBusy: false })
+const props = withDefaults(defineProps<Props>(), { locked: false, structureLocked: false, externalBusy: false })
 const emit = defineEmits<{ changed: []; 'dirty-change': [dirty: boolean]; 'bank-busy-change': [busy: boolean] }>()
 
 interface DraftQuestion {
@@ -55,6 +57,15 @@ const selectedIds = ref<string[]>([])
 const importOpen = ref(false)
 const importedNotice = ref(false)
 const importBlocked = computed(() => dirty.value || dialogOpen.value || saving.value || baseVersion.value !== props.exam.version || !!props.exam.activeJob || props.externalBusy)
+
+/** 可入库题目：已保存到服务端的题目（有 id），全选只作用于它们 */
+const bankSelectableIds = computed(() => drafts.value.map((question) => question.id).filter((id): id is string => Boolean(id)))
+const allBankSelected = computed(() => bankSelectableIds.value.length > 0 && bankSelectableIds.value.every((id) => selectedIds.value.includes(id)))
+const someBankSelected = computed(() => !allBankSelected.value && bankSelectableIds.value.some((id) => selectedIds.value.includes(id)))
+
+function toggleAllBank(checked: boolean | string | number): void {
+  selectedIds.value = checked ? [...bankSelectableIds.value] : []
+}
 
 function toDraft(question: QuestionAdminDTO): DraftQuestion {
   return {
@@ -282,6 +293,7 @@ function moveDown(index: number): void {
 }
 
 async function removeQuestion(index: number): Promise<void> {
+  if (props.structureLocked) return
   const target = drafts.value[index]
   if (!target) return
   try {
@@ -328,13 +340,16 @@ async function save(): Promise<void> {
         sourceRefs: item.sourceRefs,
       })),
     }
-    const updated = await apiFetch<ExamAdminDTO>(`/api/admin/exams/${props.exam.id}/questions`, {
+    const updated = await apiFetch<ExamAdminDTO & { syncedBankItems: number; skippedBankItems: number }>(`/api/admin/exams/${props.exam.id}/questions`, {
       method: 'PUT',
       body: payload,
       silent: true,
     })
     syncFromExam(updated)
-    ElMessage.success('题目已保存，分值已按整卷 100 分重新分配')
+    ElMessage.success(props.structureLocked
+      ? '题目已保存，已交卷成绩已重新核算，人工复核分保留'
+      : '题目已保存，分值已按整卷 100 分重新分配')
+    if (updated.syncedBankItems > 0) ElMessage.info(`已同步 ${updated.syncedBankItems} 条题库题目`)
     emit('changed')
   } catch (error) {
     fieldErrors.value = readFieldErrors(error)
@@ -342,7 +357,7 @@ async function save(): Promise<void> {
       saveError.value = '场次数据已被其他操作更新，请刷新后重试'
       emit('changed')
     } else {
-      saveError.value = describeApiError(error, '保存题目失败')
+      saveError.value = describeLifecycleError(error, '保存题目失败')
     }
   } finally {
     saving.value = false
@@ -356,18 +371,6 @@ const typeTag: Record<QuestionType, 'primary' | 'success' | 'warning' | 'info'> 
   fill_blank: 'info',
 }
 
-function answerSummary(question: DraftQuestion): string {
-  if (question.type === 'fill_blank') {
-    return question.answerDefinition.blanks
-      .map((blank, index) => `${index + 1}. ${blank.acceptedAnswers.join(' / ')}`)
-      .join('；')
-  }
-  const maps = new Map(question.options.map((option) => [option.id, option.text]))
-  if (question.type === 'true_false') return maps.get(question.answerDefinition.correctOptionIds[0] ?? '') ?? '未选择'
-  return question.answerDefinition.correctOptionIds
-    .map((id) => `${id}. ${maps.get(id) ?? ''}`)
-    .join('；')
-}
 function toggleBankSelection(id: string, checked: boolean) {
   selectedIds.value = checked ? [...selectedIds.value, id] : selectedIds.value.filter((item) => item !== id)
 }
@@ -384,8 +387,19 @@ function imported() { importOpen.value = false; selectedIds.value = []; imported
           <span class="zj-muted qs__meta">共 {{ drafts.length }} 题 · 配分由服务端按整卷 100 分自动分配（只读）</span>
         </div>
         <div class="qs__actions">
+          <div class="qs__select-all">
+            <el-checkbox
+              :model-value="allBankSelected"
+              :indeterminate="someBankSelected"
+              :disabled="importBlocked || bankSelectableIds.length === 0"
+              @update:model-value="toggleAllBank"
+            >
+              全选可入库题目
+            </el-checkbox>
+            <span class="zj-muted zj-tabular">已选 {{ selectedIds.length }} / {{ bankSelectableIds.length }}</span>
+          </div>
           <el-button :disabled="importBlocked || !selectedIds.length" @click="importOpen = true">存入题库（{{ selectedIds.length }}）</el-button>
-          <el-button type="primary" :disabled="locked || saving || !!exam.activeJob" @click="openCreate">新增题目</el-button>
+          <el-button type="primary" :disabled="locked || structureLocked || saving || !!exam.activeJob" @click="openCreate">新增题目</el-button>
           <el-button :disabled="(!dirty && !serverConflict) || saving" @click="discardChanges">放弃修改</el-button>
           <el-button type="primary" plain :loading="saving" :disabled="locked || !dirty || serverConflict" @click="save">
             保存全部题目
@@ -394,7 +408,7 @@ function imported() { importOpen.value = false; selectedIds.value = []; imported
       </div>
     </template>
 
-    <p v-if="importedNotice">已存入题库，待审核。<NuxtLink to="/admin/question-bank">进入题库审核</NuxtLink></p>
+    <p v-if="importedNotice">已存入题库，可直接用于组卷。<NuxtLink to="/admin/question-bank">查看题库</NuxtLink></p>
 
     <el-alert
       v-if="locked"
@@ -403,6 +417,14 @@ function imported() { importOpen.value = false; selectedIds.value = []; imported
       show-icon
       class="qs__alert"
       title="场次已发布、已有答卷或正在出题，题目暂不可修改。"
+    />
+    <el-alert
+      v-if="structureLocked && !locked"
+      type="info"
+      :closable="false"
+      show-icon
+      class="qs__alert"
+      title="场次已暂停：只能修改题干、选项、答案与解析，不能增删题目或改题型。"
     />
     <el-alert
       v-if="exam.activeJob && isJobActive(exam.activeJob.status)"
@@ -438,8 +460,7 @@ function imported() { importOpen.value = false; selectedIds.value = []; imported
               满分 {{ question.maxScoreUnits ? formatScoreUnits(question.maxScoreUnits) : '保存后分配' }}
             </span>
           </div>
-          <p class="qs__stem">{{ formatQuestionStem(question.stem, question.type) }}</p>
-          <p class="zj-muted qs__answer">答案：{{ answerSummary(question) }}</p>
+          <AdminQuestionContentView :question="question" highlight-correct class="qs__content" />
           <p v-if="bankOrigin(question)" class="zj-muted">
             <span v-if="bankOrigin(question)?.deleted">来源题库题目已删除</span>
             <NuxtLink v-else :to="`/admin/question-bank?itemId=${bankOrigin(question)?.itemId}`">来源题库 · v{{ bankOrigin(question)?.version }}</NuxtLink>
@@ -448,16 +469,16 @@ function imported() { importOpen.value = false; selectedIds.value = []; imported
         </div>
         <div class="qs__item-actions">
           <el-button text type="primary" :disabled="locked || saving" @click="openEdit(index)">编辑</el-button>
-          <el-button text :disabled="locked || saving || index === 0" @click="moveUp(index)">上移</el-button>
-          <el-button text :disabled="locked || saving || index === drafts.length - 1" @click="moveDown(index)">下移</el-button>
-          <el-button text type="danger" :disabled="locked || saving" @click="removeQuestion(index)">删除</el-button>
+          <el-button text :disabled="locked || structureLocked || saving || index === 0" @click="moveUp(index)">上移</el-button>
+          <el-button text :disabled="locked || structureLocked || saving || index === drafts.length - 1" @click="moveDown(index)">下移</el-button>
+          <el-button text type="danger" :disabled="locked || structureLocked || saving" @click="removeQuestion(index)">删除</el-button>
         </div>
       </li>
     </ol>
 
     <el-dialog v-model="dialogOpen" :title="dialogTitle" width="min(760px, 95vw)" top="6vh">
       <el-form label-position="top" class="qs__form">
-        <AdminQuestionContentFields :model-value="form" :errors="dialogFieldErrors" @update:model-value="Object.assign(form, $event)" />
+        <AdminQuestionContentFields :model-value="form" :errors="dialogFieldErrors" :type-locked="structureLocked" @update:model-value="Object.assign(form, $event)" />
 
         <el-form-item label="资料引用（至少 1 条：资料 + 定位 + 摘录）" :error="dialogFieldErrors.sourceRefs">
           <div class="qs__refs">
@@ -568,16 +589,16 @@ function imported() { importOpen.value = false; selectedIds.value = []; imported
   font-size: 13px;
 }
 
-.qs__stem {
-  margin: 6px 0 0;
-  white-space: pre-wrap;
-  word-break: break-word;
+.qs__content {
+  margin-top: 8px;
 }
 
-.qs__answer {
-  margin: 4px 0 0;
+.qs__select-all {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
   font-size: 13px;
-  word-break: break-word;
 }
 
 .qs__item-actions {

@@ -1,10 +1,15 @@
 <script setup lang="ts">
 import type { QuestionContentInput, QuestionType } from '#shared/types'
 import { MAX_BLANK_ANSWER_CHARS, MAX_STEM_CHARS, MAX_OPTION_TEXT_CHARS, MAX_EXPLANATION_CHARS } from '#shared/constants'
-const props = withDefaults(defineProps<{ modelValue: QuestionContentInput; errors?: Record<string, string> }>(), { errors: () => ({}) })
+const props = withDefaults(
+  defineProps<{ modelValue: QuestionContentInput; errors?: Record<string, string>; typeLocked?: boolean }>(),
+  { errors: () => ({}), typeLocked: false },
+)
 const emit = defineEmits<{ 'update:modelValue': [value: QuestionContentInput] }>()
 function update(patch: Partial<QuestionContentInput>) { emit('update:modelValue', { ...props.modelValue, ...patch }) }
 function changeType(type: QuestionType) {
+  // 暂停中服务端禁止改题型（EXAM_STRUCTURE_LOCKED），这里同步禁用
+  if (props.typeLocked) return
   const next = newQuestionContent(type)
   update({ type, options: next.options, answerDefinition: next.answerDefinition })
 }
@@ -33,9 +38,12 @@ function removeBlank(index: number) {
 
 <template>
   <el-form-item label="题型">
-    <el-select :model-value="modelValue.type" @update:model-value="changeType">
+    <el-select :model-value="modelValue.type" :disabled="typeLocked" @update:model-value="changeType">
       <el-option v-for="(label, type) in QUESTION_TYPE_LABELS" :key="type" :label="label" :value="type" />
     </el-select>
+    <p v-if="typeLocked" class="content-fields__hint zj-muted">
+      暂停中不能修改题型，也不能增删题目，只能修改题干、选项、答案与解析。
+    </p>
   </el-form-item>
   <el-form-item label="题干" :error="errors.stem">
     <el-input :model-value="modelValue.stem" type="textarea" :rows="3" :maxlength="MAX_STEM_CHARS" show-word-limit

@@ -93,6 +93,15 @@ function phaseLabel(phase: ExamListRowDTO['phase']): string {
   return EXAM_PHASE_LABELS[phase]
 }
 
+/** 只有草稿与暂停中的场次能改内容；开放中/已结束只能查看（契约 §3.3） */
+function rowEditable(phase: ExamListRowDTO['phase']): boolean {
+  return phase === 'draft' || phase === 'paused'
+}
+
+function rowActionLabel(phase: ExamListRowDTO['phase']): string {
+  return rowEditable(phase) ? '编辑' : '查看'
+}
+
 function revealPolicyLabel(policy: ExamListRowDTO['answerRevealPolicy']): string {
   return REVEAL_POLICY_LABELS[policy]
 }
@@ -104,7 +113,7 @@ function handlePageChange(next: number): void {
 
 <template>
   <section class="exams">
-    <PageHeader title="考试场次" description="草稿可编辑资料与题目；发布后按开放时间对考生可见。">
+    <PageHeader title="考试场次" description="草稿可编辑资料与题目；发布后按开放时间对考生可见，暂停期间考生暂时不能进入。">
       <template #actions>
         <el-button type="primary" @click="openCreate">新建场次</el-button>
         <el-button :loading="pending" @click="refresh()">刷新</el-button>
@@ -165,16 +174,11 @@ function handlePageChange(next: number): void {
           </template>
         </el-table-column>
 
-        <el-table-column label="状态" width="150">
+        <el-table-column label="状态" width="120">
           <template #default="{ row }">
-            <div class="exams__tags">
-              <el-tag :type="phaseTagType(row.phase)" effect="plain" size="small">
-                {{ phaseLabel(row.phase) }}
-              </el-tag>
-              <el-tag :type="row.status === 'published' ? 'success' : 'info'" effect="plain" size="small">
-                {{ row.status === 'published' ? '已发布' : '草稿' }}
-              </el-tag>
-            </div>
+            <el-tag :type="phaseTagType(row.phase)" effect="plain" size="small">
+              {{ phaseLabel(row.phase) }}
+            </el-tag>
           </template>
         </el-table-column>
 
@@ -200,7 +204,9 @@ function handlePageChange(next: number): void {
 
         <el-table-column label="操作" width="190" align="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click.stop="openRow(row)">编辑</el-button>
+            <el-button link type="primary" @click.stop="openRow(row)">
+              {{ rowActionLabel((row as ExamListRowDTO).phase) }}
+            </el-button>
             <NuxtLink :to="`/admin/exams/${row.id}/results`" @click.stop>
               <el-button link type="primary">成绩汇总</el-button>
             </NuxtLink>
@@ -281,12 +287,6 @@ function handlePageChange(next: number): void {
 
 .exams__sub {
   font-size: 13px;
-}
-
-.exams__tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
 }
 
 .exams__pager {

@@ -1,10 +1,10 @@
 <script setup lang="ts">
 /**
  * 公开策略 + 发布预检 + 发布/撤回（契约 §9.2 / §8.5 #25、#26 / §10.5）：
- * 发布前逐条渲染 publishChecklist；时间冲突或预检失败按错误码展示。
+ * 发布前逐条渲染 publishChecklist；预检失败按错误码展示（时间重叠已不再是阻止项，契约 §10.1）。
  */
 import type { AnswerRevealPolicy, ExamAdminDTO, ExamUpdateRequest } from '#shared/types'
-import { REVEAL_POLICY_LABELS } from '~/utils/exam'
+import { EXAM_PHASE_LABELS, EXAM_PHASE_TAG_TYPES, REVEAL_POLICY_LABELS } from '~/utils/exam'
 
 interface Props {
   exam: ExamAdminDTO
@@ -12,14 +12,6 @@ interface Props {
 }
 const props = defineProps<Props>()
 const emit = defineEmits<{ changed: []; 'dirty-change': [dirty: boolean] }>()
-
-interface ConflictItem {
-  id?: string
-  title?: string
-  startsAt?: number
-  endsAt?: number
-  timeZone?: string
-}
 
 const policy = ref<AnswerRevealPolicy>(props.exam.answerRevealPolicy)
 watch(
@@ -31,7 +23,6 @@ watch(
 
 const busy = ref(false)
 const errorMessage = ref('')
-const conflicts = ref<ConflictItem[]>([])
 const failedChecks = ref<string[]>([])
 
 const checklist = computed(() => props.exam.publishChecklist)
@@ -43,6 +34,18 @@ const canUnpublish = computed(
 const policyDirty = computed(() => policy.value !== props.exam.answerRevealPolicy)
 watch(() => policyDirty.value || busy.value, (value) => emit('dirty-change', value), { immediate: true })
 const jobActive = computed(() => isJobActive(props.exam.activeJob?.status))
+
+/** 暂停/继续/结束考试（契约 §5.1）：二次确认与错误文案统一在 composable 内 */
+const {
+  paused: isPaused,
+  canPause,
+  canResume,
+  canEnd,
+  busy: lifecycleBusy,
+  pause: pauseExam,
+  resume: resumeExam,
+  end: endExam,
+} = useExamLifecycle({ exam: computed(() => props.exam), onChanged: () => emit('changed') })
 
 async function savePolicy(): Promise<void> {
   busy.value = true
@@ -69,18 +72,13 @@ async function savePolicy(): Promise<void> {
 async function publish(): Promise<void> {
   busy.value = true
   errorMessage.value = ''
-  conflicts.value = []
   failedChecks.value = []
   try {
     await apiFetch<ExamAdminDTO>(`/api/admin/exams/${props.exam.id}/publish`, { method: 'POST', silent: true })
     ElMessage.success('场次已发布，考生可在开放时间内作答')
     emit('changed')
   } catch (error) {
-    if (error instanceof ApiClientError && error.code === 'EXAM_TIME_CONFLICT') {
-      const raw = (error.details as { conflicts?: unknown } | undefined)?.conflicts
-      conflicts.value = Array.isArray(raw) ? (raw as ConflictItem[]) : []
-      errorMessage.value = '与已有场次时间冲突，发布被拒绝'
-    } else if (error instanceof ApiClientError && error.code === 'PUBLISH_PRECHECK_FAILED') {
+    if (error instanceof ApiClientError && error.code === 'PUBLISH_PRECHECK_FAILED') {
       const raw = (error.details as { checks?: unknown } | undefined)?.checks
       if (Array.isArray(raw)) {
         failedChecks.value = raw.map((item) =>
@@ -144,11 +142,6 @@ async function removeExam(): Promise<void> {
   }
 }
 
-function conflictText(item: ConflictItem): string {
-  const zone = item.timeZone ?? props.exam.timeZone
-  if (!item.startsAt || !item.endsAt) return item.title ?? item.id ?? '未知场次'
-  return `${item.title ?? item.id ?? '未命名场次'}：${formatDateTime(item.startsAt, zone)} ~ ${formatDateTime(item.endsAt, zone)}（${zone}）`
-}
 </script>
 
 <template>
@@ -156,8 +149,8 @@ function conflictText(item: ConflictItem): string {
     <template #header>
       <div class="pub__head">
         <span class="pub__title">公开策略与发布</span>
-        <el-tag :type="isPublished ? 'success' : 'info'" effect="plain" size="small">
-          {{ isPublished ? '已发布' : '草稿' }}
+        <el-tag :type="EXAM_PHASE_TAG_TYPES[exam.phase]" effect="plain" size="small">
+          {{ EXAM_PHASE_LABELS[exam.phase] }}
         </el-tag>
       </div>
     </template>
@@ -192,16 +185,31 @@ function conflictText(item: ConflictItem): string {
       <el-empty v-else description="暂无预检结果，刷新后可重新获取" :image-size="80" />
     </section>
 
+    <section class="pub__section">
+      <h3 class="pub__subtitle">考试生命周期</h3>
+      <p class="zj-muted pub__hint">
+        当前阶段：{{ EXAM_PHASE_LABELS[exam.phase] }}
+        <template v-if="exam.endedAt"> · 结束于 {{ formatDateTime(exam.endedAt, exam.timeZone) }}</template>
+        <template v-else-if="exam.pausedAt"> · 暂停于 {{ formatDateTime(exam.pausedAt, exam.timeZone) }}</template>
+      </p>
+      <p v-if="isPaused" class="zj-muted pub__hint">
+        暂停中只能修改基本信息与题目内容，组卷与出题不可编辑；考生暂时不能进入作答，进行中的答卷仍可提交。
+      </p>
+      <div class="pub__inline">
+        <el-button v-if="canPause" :loading="lifecycleBusy" :disabled="externalBusy" @click="pauseExam">暂停考试</el-button>
+        <el-button v-if="canResume" type="primary" :loading="lifecycleBusy" :disabled="externalBusy" @click="resumeExam">继续考试</el-button>
+        <el-button v-if="canEnd" type="danger" plain :loading="lifecycleBusy" :disabled="externalBusy" @click="endExam">结束考试</el-button>
+        <span v-if="!canPause && !canResume && !canEnd" class="zj-muted pub__hint">
+          草稿场次没有暂停/继续/结束操作；发布后可在这里控制考试进程。
+        </span>
+        <span v-else-if="canEnd" class="zj-muted pub__hint">
+          结束考试在任何已发布阶段都可用：结束后考生不能再进入，进行中的答卷仍可提交。
+        </span>
+      </div>
+    </section>
+
     <el-alert v-if="errorMessage" type="error" :closable="false" show-icon :title="errorMessage" class="pub__alert">
-      <template v-if="conflicts.length" #default>
-        <ul class="pub__conflicts">
-          <li v-for="(item, index) in conflicts" :key="item.id ?? index">
-            {{ conflictText(item) }}
-            <NuxtLink v-if="item.id" :to="`/admin/exams/${item.id}`" class="pub__conflict-link">打开</NuxtLink>
-          </li>
-        </ul>
-      </template>
-      <template v-else-if="failedChecks.length" #default>
+      <template v-if="failedChecks.length" #default>
         <ul class="pub__conflicts">
           <li v-for="(item, index) in failedChecks" :key="index">{{ item }}</li>
         </ul>
@@ -329,10 +337,6 @@ function conflictText(item: ConflictItem): string {
   margin: 4px 0 0;
   padding-left: 18px;
   font-size: 14px;
-}
-
-.pub__conflict-link {
-  margin-left: 8px;
 }
 
 .pub__actions {

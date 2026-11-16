@@ -17,6 +17,9 @@ import { validateSourceRefs } from './documents'
 import { ApiFailure, throwApi } from '../utils/respond'
 import { withTransaction } from '../utils/db'
 import { isPlainObject } from '../utils/validate'
+import { bankContentKey } from './question-bank-stats'
+import { findBankDuplicate } from '../db/queries/question-bank'
+import { regradeSubmittedAttempts } from './regrading'
 
 /** 规范化后的题目（id / position / 分值由服务端决定） */
 export interface PreparedQuestion {
@@ -210,10 +213,208 @@ export function findStoredQuestionIssue(question: QuestionRow): string | null {
 
 export interface SaveQuestionsResult {
   exam: ExamRow
+  /** 同步成功的题库条目数（origin_question_id 口径） */
+  syncedBankItems: number
+  /** 因 status='disabled' 被跳过的题库条目数 */
+  skippedBankItems: number
+}
+
+/** 可同步到来源题库条目的题目内容。 */
+interface BankSyncSource {
+  id: string
+  type: QuestionType
+  stem: string
+  options: QuestionOption[]
+  answerDefinition: AnswerDefinition
+  explanation: string
 }
 
 /**
- * 整体替换题目（§8.5 24）：事务内校验版本与状态、重算配分、清理旧题、写新题。
+ * 同步题库条目（契约 §3.3）：只同步「这道题被存入题库过」的条目，
+ * 依据 question_bank_items.origin_question_id = questions.id。
+ * 从题库复制进场的题（questions.source_bank_item_id 非空）不反向改题库——题库条目可能被多个场次共用。
+ * 内容键随题目更新；重复冲突会回滚本次场次保存，不覆盖其他题库条目。
+ */
+function syncBankItems(
+  db: DatabaseSync,
+  questions: BankSyncSource[],
+  now: number,
+): { synced: number; skipped: number } {
+  const find = db.prepare(`SELECT id, status, type, stem, options_json, answer_definition_json, explanation
+    FROM question_bank_items WHERE origin_question_id = ?`)
+  const update = db.prepare(
+    `UPDATE question_bank_items
+        SET type = ?, stem = ?, options_json = ?, answer_definition_json = ?, explanation = ?,
+            content_key = ?, status = 'active',
+            version = version + 1, updated_at = ?
+      WHERE id = ?`,
+  )
+  let synced = 0
+  let skipped = 0
+  const changes: Array<{ id: string; question: BankSyncSource; options: string; definition: string }> = []
+  for (const question of questions) {
+    const options = JSON.stringify(question.options)
+    const definition = JSON.stringify(question.answerDefinition)
+    const rows = find.all(question.id) as Array<{
+      id: string; status: string; type: QuestionType; stem: string; options_json: string; answer_definition_json: string; explanation: string
+    }>
+    for (const row of rows) {
+      if (row.status === 'disabled') {
+        skipped += 1
+        continue
+      }
+      if (row.type !== question.type || row.stem !== question.stem || row.options_json !== options
+        || row.answer_definition_json !== definition || row.explanation !== question.explanation) {
+        changes.push({ id: row.id, question, options, definition })
+      }
+    }
+  }
+  // 同一事务内先释放待修改条目的旧键，允许两道题交换内容；最终键仍受唯一约束保护。
+  const releaseKey = db.prepare('UPDATE question_bank_items SET content_key = ? WHERE id = ?')
+  for (const change of changes) releaseKey.run(JSON.stringify(['bank-sync', change.id]), change.id)
+  for (const change of changes) {
+    const key = bankContentKey(change.question)
+    const duplicate = findBankDuplicate(db, key, change.id)
+    if (duplicate) {
+      throw new ApiFailure('QUESTION_BANK_DUPLICATE', '同步后与已有题库题目重复，本次题目修改未保存', { itemId: duplicate.id })
+    }
+    update.run(change.question.type, change.question.stem, change.options, change.definition, change.question.explanation, key, now, change.id)
+    synced += 1
+  }
+  return { synced, skipped }
+}
+
+/** 草稿：整体替换（保留传入的现有 id，其余新建），重算配分 */
+function replaceQuestions(
+  db: DatabaseSync,
+  examId: string,
+  prepared: PreparedQuestion[],
+  existingQuestions: QuestionRow[],
+  now: number,
+): BankSyncSource[] {
+  const units = prepared.length > 0 ? allocateUnits(SCORE_TOTAL_UNITS, prepared.length) : []
+  // 既有题目 id 集合：保留传入的 id 以免前端持有的引用失效，其余一律新建
+  const existingById = new Map(existingQuestions.map((question) => [question.id, question]))
+  // 整体替换：先清空旧题（草稿阶段不可能存在答卷，answers 无残留），再按顺序重写
+  deleteQuestionsNotIn(db, examId, [])
+  const keepIds: string[] = []
+  const written: BankSyncSource[] = []
+  prepared.forEach((question, index) => {
+    const prior = question.existingId ? existingById.get(question.existingId) : undefined
+    const id = prior?.id ?? randomUUID()
+    insertQuestion(
+      db,
+      {
+        id,
+        examId,
+        position: index + 1,
+        type: question.type,
+        stem: question.stem,
+        options: question.options,
+        answerDefinition: question.answerDefinition,
+        explanation: question.explanation,
+        sourceRefs: question.sourceRefs,
+        maxScoreUnits: units[index] ?? 0,
+        bankOrigin: prior?.bankOrigin ?? null,
+        bankGroupKey: prior?.bankGroupKey ?? null,
+      },
+      now,
+    )
+    keepIds.push(id)
+    written.push({
+      id,
+      type: question.type,
+      stem: question.stem,
+      options: question.options,
+      answerDefinition: question.answerDefinition,
+      explanation: question.explanation,
+    })
+  })
+  deleteQuestionsNotIn(db, examId, keepIds)
+  return written
+}
+
+/**
+ * 暂停态：内容级更新（契约 §3.3）。题目 id 集合、每题题型、题目总数必须与库内一致，
+ * 否则 EXAM_STRUCTURE_LOCKED；只更新 stem / options / answerDefinition / explanation / sourceRefs。
+ */
+function updateQuestionContents(
+  db: DatabaseSync,
+  examId: string,
+  prepared: PreparedQuestion[],
+  existingQuestions: QuestionRow[],
+  now: number,
+): BankSyncSource[] {
+  const existingById = new Map(existingQuestions.map((question) => [question.id, question]))
+  const seen = new Set<string>()
+  prepared.forEach((question, index) => {
+    const id = question.existingId
+    if (!id) {
+      throwApi('EXAM_STRUCTURE_LOCKED', `第 ${index + 1} 题缺少题目 id，暂停期间不能新增题目`, {
+        index,
+        reason: 'missing id',
+      })
+    }
+    if (seen.has(id)) {
+      throwApi('EXAM_STRUCTURE_LOCKED', `第 ${index + 1} 题题目 id 重复`, { index, questionId: id, reason: 'duplicate id' })
+    }
+    seen.add(id)
+    const prior = existingById.get(id)
+    if (!prior) {
+      throwApi('EXAM_STRUCTURE_LOCKED', `第 ${index + 1} 题不属于本场次，暂停期间不能新增题目`, {
+        index,
+        questionId: id,
+        reason: 'unknown id',
+      })
+    }
+    if (prior.type !== question.type) {
+      throwApi('EXAM_STRUCTURE_LOCKED', `第 ${index + 1} 题暂停期间不能修改题型`, {
+        index,
+        questionId: id,
+        field: 'type',
+      })
+    }
+  })
+  if (seen.size !== existingQuestions.length) {
+    throwApi('EXAM_STRUCTURE_LOCKED', '暂停期间不能增删题目', {
+      expected: existingQuestions.length,
+      actual: seen.size,
+    })
+  }
+  const update = db.prepare(
+    `UPDATE questions
+        SET stem = ?, options_json = ?, answer_definition_json = ?, explanation = ?,
+            source_refs_json = ?, updated_at = ?
+      WHERE id = ? AND exam_id = ?`,
+  )
+  return prepared.map((question) => {
+    const id = question.existingId ?? ''
+    update.run(
+      question.stem,
+      JSON.stringify(question.options),
+      JSON.stringify(question.answerDefinition),
+      question.explanation,
+      JSON.stringify(question.sourceRefs),
+      now,
+      id,
+      examId,
+    )
+    return {
+      id,
+      type: question.type,
+      stem: question.stem,
+      options: question.options,
+      answerDefinition: question.answerDefinition,
+      explanation: question.explanation,
+    }
+  })
+}
+
+/**
+ * 整体保存题目（§8.5 24；暂停态按契约 §3.3 走内容级更新）：
+ * - 草稿：事务内校验版本与状态、重算配分、清理旧题、写新题；
+ * - 暂停态（published + paused_at 非空 + 未结束）：结构锁 + 只更新题目内容；
+ * - 两种模式都把内容变化同步到题库条目（origin_question_id 口径）。
  */
 export function saveQuestions(
   db: DatabaseSync,
@@ -221,7 +422,7 @@ export function saveQuestions(
   expectedVersion: number,
   inputs: unknown[],
   now: number,
-): ExamRow {
+): SaveQuestionsResult {
   if (!Array.isArray(inputs)) {
     throw new ApiFailure('VALIDATION_FAILED', '题目列表格式不正确', { fields: { questions: '必须是数组' } })
   }
@@ -235,8 +436,13 @@ export function saveQuestions(
   return withTransaction(db, () => {
     const exam = findExam(db, examId)
     if (!exam) throw new ApiFailure('NOT_FOUND', '考试场次不存在')
-    if (exam.status !== 'draft') {
-      throw new ApiFailure('EXAM_LOCKED', '已发布场次不能修改题目', { reason: 'published' })
+    // 暂停态：published + paused_at 非空 + 未结束（契约 §3.3）；未暂停的已发布与已结束一律锁定
+    const paused = exam.pausedAt !== null && exam.endedAt === null
+    if (exam.status !== 'draft' && !paused) {
+      const ended = exam.endedAt !== null
+      throw new ApiFailure('EXAM_LOCKED', ended ? '已结束场次不能修改题目' : '已发布场次不能修改题目', {
+        reason: ended ? 'ended' : 'published',
+      })
     }
     if (findActiveJob(db, examId)) {
       throw new ApiFailure('EXAM_HAS_ACTIVE_JOB', '出题任务进行中，暂不能修改题目')
@@ -247,41 +453,18 @@ export function saveQuestions(
     prepared.forEach((question, index) => {
       validateSourceRefs(db, examId, question.sourceRefs, index)
     })
-    const units = prepared.length > 0 ? allocateUnits(SCORE_TOTAL_UNITS, prepared.length) : []
-    // 既有题目 id 集合：保留传入的 id 以免前端持有的引用失效，其余一律新建
-    const existingQuestions = new Map(listQuestions(db, examId).map((question) => [question.id, question]))
-    // 整体替换：先清空旧题（草稿阶段不可能存在答卷，answers 无残留），再按顺序重写
-    deleteQuestionsNotIn(db, examId, [])
-    const keepIds: string[] = []
-    prepared.forEach((question, index) => {
-      const prior = question.existingId ? existingQuestions.get(question.existingId) : undefined
-      const existing = prior?.id
-      const id = existing ?? randomUUID()
-      insertQuestion(
-        db,
-        {
-          id,
-          examId,
-          position: index + 1,
-          type: question.type,
-          stem: question.stem,
-          options: question.options,
-          answerDefinition: question.answerDefinition,
-          explanation: question.explanation,
-          sourceRefs: question.sourceRefs,
-          maxScoreUnits: units[index] ?? 0,
-          bankOrigin: prior?.bankOrigin ?? null,
-          bankGroupKey: prior?.bankGroupKey ?? null,
-        },
-        now,
-      )
-      keepIds.push(id)
-    })
-    deleteQuestionsNotIn(db, examId, keepIds)
+    const existingQuestions = listQuestions(db, examId)
+    const written =
+      exam.status === 'draft'
+        ? replaceQuestions(db, examId, prepared, existingQuestions, now)
+        : updateQuestionContents(db, examId, prepared, existingQuestions, now)
     touchExamVersion(db, examId, now)
+    // 同一事务内同步题库，避免题目内容与题库条目出现中间态
+    const sync = syncBankItems(db, written, now)
+    if (exam.status === 'published') regradeSubmittedAttempts(db, examId, now)
     const updated = findExam(db, examId)
     if (!updated) throw new ApiFailure('INTERNAL_ERROR', '题目保存后无法读取场次')
-    return updated
+    return { exam: updated, syncedBankItems: sync.synced, skippedBankItems: sync.skipped }
   })
 }
 

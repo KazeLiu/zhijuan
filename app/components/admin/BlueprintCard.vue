@@ -185,20 +185,29 @@ async function generate(): Promise<void> {
   }
 }
 
+/** 重试接口在 JobDTO 基础上多返回 retriedBatches：只重跑失败批次，成功批次沿用（契约 §10.3） */
+interface JobRetryResult extends JobDTO {
+  retriedBatches?: number
+}
+
 async function retryJob(): Promise<void> {
   const current = job.value
   if (!current) return
   retrying.value = true
   generateError.value = ''
   try {
-    const next = await apiFetch<JobDTO>(`/api/admin/jobs/${current.id}/retry`, {
+    const next = await apiFetch<JobRetryResult>(`/api/admin/jobs/${current.id}/retry`, {
       method: 'POST',
       silent: true,
     })
     job.value = next
     track(next)
     emit('changed')
-    ElMessage.success('已重新提交出题任务')
+    ElMessage.success(
+      typeof next.retriedBatches === 'number'
+        ? `已重跑 ${next.retriedBatches} 个失败批次，其余批次沿用上次成功结果`
+        : '已重新提交出题任务',
+    )
   } catch (error) {
     generateError.value = describeApiError(error, '重试失败')
   } finally {
@@ -366,7 +375,12 @@ defineExpose({ refreshJob })
           <p class="bp__job-err">
             {{ activeJob.errorCode ? `错误码：${activeJob.errorCode}` : '请检查模型设置与资料后重试。' }}
           </p>
-          <el-button size="small" type="primary" :loading="retrying" :disabled="locked" @click="retryJob">重试出题</el-button>
+          <p class="zj-muted bp__job-err">
+            本批共 {{ activeJob.progressTotal }} 批，已完成 {{ activeJob.progressDone }} 批；重试只重跑失败批次，成功批次直接沿用。
+          </p>
+          <el-button size="small" type="primary" :loading="retrying" :disabled="locked" @click="retryJob">
+            重试失败批次
+          </el-button>
         </template>
       </el-alert>
     </div>
