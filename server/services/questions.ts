@@ -271,6 +271,7 @@ export function saveQuestions(
           sourceRefs: question.sourceRefs,
           maxScoreUnits: units[index] ?? 0,
           bankOrigin: prior?.bankOrigin ?? null,
+          bankGroupKey: prior?.bankGroupKey ?? null,
         },
         now,
       )

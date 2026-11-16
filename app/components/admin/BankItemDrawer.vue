@@ -14,7 +14,7 @@ const error = ref('')
 const conflict = ref(false)
 const duplicateId = ref('')
 const baseline = ref('')
-const form = reactive<BankQuestionInput>({ ...newQuestionContent(), knowledgePoint: '', difficulty: 'normal', sourceRefs: [] })
+const form = reactive<BankQuestionInput>({ ...newQuestionContent(), sourceGroup: '', knowledgePoint: '', difficulty: 'normal', sourceRefs: [] })
 const dirty = computed(() => open.value && mode.value !== 'view' && JSON.stringify(form) !== baseline.value)
 const preview = reactive({ open: false, fileId: '' })
 let request = 0
@@ -22,11 +22,12 @@ let request = 0
 function fill(item: BankItemDTO) {
   Object.assign(form, JSON.parse(JSON.stringify({ type: item.type, stem: item.stem, options: item.options,
     answerDefinition: item.answerDefinition, explanation: item.explanation, knowledgePoint: item.knowledgePoint,
-    difficulty: item.difficulty, sourceRefs: item.sourceRefs })) as BankQuestionInput)
+    difficulty: item.difficulty, sourceGroup: item.sourceGroup, sourceRefs: item.sourceRefs })) as BankQuestionInput)
   baseline.value = JSON.stringify(form)
 }
 function handleError(cause: unknown, fallback: string) {
-  error.value = describeApiError(cause, fallback)
+  const fields = Object.values(readFieldErrors(cause))
+  error.value = fields.length ? fields.join('；') : describeApiError(cause, fallback)
   if (cause instanceof ApiClientError) {
     conflict.value = cause.code === 'VERSION_CONFLICT'
     duplicateId.value = cause.code === 'QUESTION_BANK_DUPLICATE' ? String((cause.details as { itemId?: string })?.itemId ?? '') : ''
@@ -37,7 +38,7 @@ async function load(id = props.itemId, intent = props.intent) {
   loading.value = true; error.value = ''; conflict.value = false; duplicateId.value = ''; record.value = null
   mode.value = intent
   if (intent === 'create') {
-    Object.assign(form, { ...newQuestionContent(), knowledgePoint: '', difficulty: 'normal',
+    Object.assign(form, { ...newQuestionContent(), sourceGroup: '', knowledgePoint: '', difficulty: 'normal',
       sourceRefs: [{ libraryFileId: '', locator: '', quote: '' }] })
     baseline.value = JSON.stringify(form); loading.value = false
     return
@@ -49,7 +50,7 @@ async function load(id = props.itemId, intent = props.intent) {
   } catch (cause) { if (token === request) handleError(cause, '无法加载题目') }
   finally { if (token === request) loading.value = false }
 }
-watch([open, () => props.itemId], ([visible]) => {
+watch([open, () => props.itemId, () => props.intent], ([visible]) => {
   if (visible) void load()
   else { ++request; loading.value = false }
 }, { immediate: true })
@@ -74,12 +75,12 @@ async function save() {
       method: id ? 'PUT' : 'POST', body: id ? { expectedVersion: record.value!.version, question: form } : form, silent: true,
     })
     record.value = result; fill(result); mode.value = 'view'
-    ElMessage.success(result.status === 'disabled' ? '已保存，题目仍为停用状态' : '已保存为待审核，请核对后审核启用')
+    ElMessage.success(result.status === 'disabled' ? '已保存，题目仍为停用状态' : '已保存，可直接用于组卷')
     emit('changed'); await reloadCatalog()
   } catch (cause) { handleError(cause, '保存题目失败') }
   finally { busy.value = false }
 }
-async function changeState(action: 'approve' | 'disable' | 'delete') {
+async function changeState(action: 'enable' | 'disable' | 'delete') {
   const item = record.value
   if (!item || busy.value) return
   if (action === 'delete') {
@@ -95,7 +96,7 @@ async function changeState(action: 'approve' | 'disable' | 'delete') {
       const result = await apiFetch<BankItemDTO>(`/api/admin/question-bank/${item.id}/${action}`, { method: 'POST', body: { expectedVersion: item.version }, silent: true })
       record.value = result; fill(result)
     }
-    ElMessage.success(action === 'approve' ? '已审核启用，可用于组卷' : action === 'disable' ? '已停用，不再参与组卷' : '已删除')
+    ElMessage.success(action === 'enable' ? '已启用，可用于组卷' : action === 'disable' ? '已停用，不再参与组卷' : '已删除')
     emit('changed')
   } catch (cause) { handleError(cause, '操作失败') }
   finally { busy.value = false }
@@ -121,12 +122,12 @@ function updateContent(value: QuestionContentInput) { Object.assign(form, value)
       <template v-if="mode === 'view' && record">
         <div class="bank-drawer__meta"><el-tag>{{ BANK_STATUS_LABELS[record.status] }}</el-tag><span>{{ record.knowledgePoint }}</span><span>{{ DIFFICULTY_LABELS[record.difficulty] }}</span><span>v{{ record.version }}</span></div>
         <AdminQuestionContentView :question="record" />
+        <p v-if="record.sourceGroup">同源考点：{{ record.sourceGroup }}</p>
         <h3>资料出处</h3>
         <section v-for="(ref, index) in record.sourceRefs" :key="index" class="bank-drawer__source">
           <el-button text type="primary" @click="showSource(ref.libraryFileId)">{{ record.sources.find(source => source.libraryFileId === ref.libraryFileId)?.originalName }} · {{ ref.locator }}</el-button>
           <blockquote>{{ ref.quote }}</blockquote>
         </section>
-        <p v-if="record.reviewedBy" class="zj-muted">最近审核：{{ record.reviewedBy }} · {{ formatDateTime(record.reviewedAt) }}</p>
         <NuxtLink v-if="record.originExamId" :to="`/admin/exams/${record.originExamId}`">查看来源场次</NuxtLink>
         <h3>作答表现</h3>
         <p class="zj-muted">同一姓名取最早一次可比的已作答记录；未满分包含部分得分，不含未作答。</p>
@@ -143,10 +144,17 @@ function updateContent(value: QuestionContentInput) { Object.assign(form, value)
         <el-tag v-else-if="record.mistakeStats.isErrorProne" type="danger">易错</el-tag>
       </template>
       <el-form v-else label-position="top" :disabled="busy">
-        <el-form-item label="主要知识点" required>
-          <el-select v-model="form.knowledgePoint" filterable allow-create default-first-option placeholder="选择或输入知识点">
-            <el-option v-for="point in catalog?.knowledgePoints ?? []" :key="point" :label="point" :value="point" />
+        <el-form-item label="同源考点">
+          <el-select v-model="form.sourceGroup" filterable allow-create default-first-option clearable placeholder="独立题可留空；同一考点的变体选择同一组" style="width:100%">
+            <el-option v-for="group in catalog?.sourceGroups ?? []" :key="group" :label="group" :value="group" />
           </el-select>
+          <span class="zj-muted">同一来源资料、同名考点的题目，每份试卷最多选一道。</span>
+        </el-form-item>
+        <el-form-item label="主要知识点" required>
+          <AdminKnowledgePointInput
+            v-model="form.knowledgePoint"
+            :suggestions="catalog?.knowledgePoints ?? []"
+          />
           <span v-if="Array.from(form.knowledgePoint).length > MAX_KNOWLEDGE_POINT_CHARS" class="bank-drawer__error">最多 {{ MAX_KNOWLEDGE_POINT_CHARS }} 字</span>
         </el-form-item>
         <el-form-item label="难度"><el-radio-group v-model="form.difficulty"><el-radio v-for="(label, level) in DIFFICULTY_LABELS" :key="level" :value="level">{{ label }}</el-radio></el-radio-group></el-form-item>
@@ -173,12 +181,12 @@ function updateContent(value: QuestionContentInput) { Object.assign(form, value)
       <div class="bank-drawer__actions">
         <el-button :disabled="busy" @click="beforeClose(() => open = false)">关闭</el-button>
         <template v-if="!readOnly && !loading">
-          <el-button v-if="mode !== 'view'" type="primary" :loading="busy" @click="save">{{ record?.status === 'disabled' ? '保存并保持停用' : '保存待审核' }}</el-button>
+          <el-button v-if="mode !== 'view'" type="primary" :loading="busy" @click="save">{{ record?.status === 'disabled' ? '保存并保持停用' : '保存' }}</el-button>
           <template v-else-if="record">
             <el-button :disabled="busy" @click="mode = 'edit'">编辑</el-button>
-            <el-button v-if="record.status !== 'active'" :disabled="busy" type="danger" plain @click="changeState('delete')">删除</el-button>
+            <el-button :disabled="busy" type="danger" plain @click="changeState('delete')">删除</el-button>
             <el-button v-if="record.status === 'active'" :loading="busy" @click="changeState('disable')">停用</el-button>
-            <el-button v-else type="primary" :loading="busy" @click="changeState('approve')">审核并启用</el-button>
+            <el-button v-else type="primary" :loading="busy" @click="changeState('enable')">启用</el-button>
           </template>
         </template>
       </div>

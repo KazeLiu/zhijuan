@@ -1,4 +1,4 @@
-import type { QuestionType } from '../../shared/types/question'
+import { QUESTION_TYPES, QUESTION_TYPE_LABELS, type QuestionType } from '../../shared/types/question'
 import { ApiFailure } from '../utils/respond'
 import { isPlainObject } from '../utils/validate'
 
@@ -17,13 +17,21 @@ function invalid(message: string): never {
   throw new ApiFailure('UPSTREAM_INVALID_RESPONSE', message)
 }
 
+/** 模型有时照抄界面的中文题型名；只接受四种明确名称，不推测含糊的“选择题”。 */
+export function normalizeModelQuestionType(raw: unknown): QuestionType | null {
+  if (typeof raw !== 'string') return null
+  const value = raw.normalize('NFKC').trim()
+  return QUESTION_TYPES.find((type) => type === value || QUESTION_TYPE_LABELS[type] === value) ?? null
+}
+
 function normalizeItem(item: unknown, expectedType: QuestionType, index: number): Record<string, unknown> {
   const label = `第 ${index + 1} 道题`
   if (!isPlainObject(item)) invalid(`${label}不是 JSON 对象`)
   for (const key of Object.keys(item)) {
     if (!QUESTION_KEYS.has(key)) invalid(`${label}包含多余字段：${key}`)
   }
-  if (item.type !== expectedType) invalid(`${label}的 type 与请求的题型不一致`)
+  const type = normalizeModelQuestionType(item.type)
+  if (type !== expectedType) invalid(`${label}的 type 与请求的题型不一致`)
   if (typeof item.stem !== 'string' || item.stem.trim() === '') invalid(`${label}缺少题干 stem`)
   if (typeof item.explanation !== 'string' || item.explanation.trim() === '') invalid(`${label}缺少解析 explanation`)
   if (!isPlainObject(item.answerDefinition)) invalid(`${label}缺少 answerDefinition`)
@@ -34,7 +42,7 @@ function normalizeItem(item: unknown, expectedType: QuestionType, index: number)
     invalid(`${label}的 options 必须是数组`)
   }
   const normalized: Record<string, unknown> = {
-    type: item.type,
+    type,
     stem: item.stem,
     answerDefinition: item.answerDefinition,
     explanation: item.explanation,

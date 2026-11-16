@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { BankFilters, LibraryFileDTO } from '#shared/types'
+import { DIFFICULTY_LABELS } from '#shared/types'
 const props = defineProps<{ modelValue: BankFilters; knowledgePoints: string[]; files: LibraryFileDTO[] }>()
 const emit = defineEmits<{ 'update:modelValue': [filters: BankFilters] }>()
 function update(patch: Partial<BankFilters>) { emit('update:modelValue', { ...props.modelValue, ...patch }) }

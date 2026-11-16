@@ -7,9 +7,9 @@ import { changeBankState } from '../../../services/question-bank'
 export default defineEventHandler((event) => {
   try {
     const now = Date.now()
-    const admin = requireAdmin(event, now)
+    requireAdmin(event, now)
     const version = readExpectedVersion({ expectedVersion: Number(queryValue(getQuery(event).expectedVersion)) })
-    changeBankState(useDb(), readParam(event, 'itemId'), version, 'delete', admin.name, now)
+    changeBankState(useDb(), readParam(event, 'itemId'), version, 'delete', now)
     return ok(event, { ok: true })
   } catch (error) { return failFrom(event, error) }
 })

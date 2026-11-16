@@ -10,8 +10,7 @@ export interface BankRecord extends BankQuestionInput {
   contentKey: string
   originExamId: string | null
   originQuestionId: string | null
-  reviewedBy: string | null
-  reviewedAt: number | null
+  sourceGroup: string
   createdAt: number
   updatedAt: number
   sources: BankItemDTO['sources']
@@ -22,7 +21,7 @@ interface RawBank {
   knowledge_point: string; difficulty: BankQuestionInput['difficulty']; stem: string
   options_json: string; answer_definition_json: string; explanation: string; content_key: string
   origin_exam_id: string | null; origin_question_id: string | null
-  reviewed_by: string | null; reviewed_at: number | null; created_at: number; updated_at: number
+  source_group: string; created_at: number; updated_at: number
 }
 
 type BankFilter = Partial<BankListQuery>
@@ -53,7 +52,7 @@ function mapRecords(db: DatabaseSync, rows: RawBank[]): BankRecord[] {
     answerDefinition: JSON.parse(row.answer_definition_json) as AnswerDefinition,
     explanation: row.explanation, contentKey: row.content_key,
     originExamId: row.origin_exam_id, originQuestionId: row.origin_question_id,
-    reviewedBy: row.reviewed_by, reviewedAt: row.reviewed_at,
+    sourceGroup: row.source_group,
     createdAt: row.created_at, updatedAt: row.updated_at, sourceRefs: [], sources: [],
   }))
   const byId = new Map(result.map((item) => [item.id, item]))
@@ -117,22 +116,22 @@ export function insertBankRecord(
   origin?: { examId: string; questionId: string },
 ): void {
   db.prepare(`INSERT INTO question_bank_items
-    (id, type, knowledge_point, difficulty, stem, options_json, answer_definition_json, explanation,
-      content_key, origin_exam_id, origin_question_id, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    (id, status, type, knowledge_point, difficulty, stem, options_json, answer_definition_json, explanation,
+      content_key, origin_exam_id, origin_question_id, created_at, updated_at, source_group)
+    VALUES (?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(id, question.type, question.knowledgePoint, question.difficulty, question.stem, JSON.stringify(question.options),
       JSON.stringify(question.answerDefinition), question.explanation, contentKey,
-      origin?.examId ?? null, origin?.questionId ?? null, now, now)
+      origin?.examId ?? null, origin?.questionId ?? null, now, now, question.sourceGroup ?? '')
   writeBankSources(db, id, question.sourceRefs)
 }
 
 export function updateBankRecord(db: DatabaseSync, id: string, question: BankQuestionInput, key: string, now: number): void {
   db.prepare(`UPDATE question_bank_items SET type = ?, knowledge_point = ?, difficulty = ?, stem = ?,
     options_json = ?, answer_definition_json = ?, explanation = ?, content_key = ?,
-    status = CASE WHEN status = 'disabled' THEN 'disabled' ELSE 'draft' END,
-    reviewed_by = NULL, reviewed_at = NULL, version = version + 1, updated_at = ? WHERE id = ?`)
+    status = CASE WHEN status = 'disabled' THEN 'disabled' ELSE 'active' END,
+    source_group = ?, version = version + 1, updated_at = ? WHERE id = ?`)
     .run(question.type, question.knowledgePoint, question.difficulty, question.stem, JSON.stringify(question.options),
-      JSON.stringify(question.answerDefinition), question.explanation, key, now, id)
+      JSON.stringify(question.answerDefinition), question.explanation, key, question.sourceGroup ?? '', now, id)
   writeBankSources(db, id, question.sourceRefs)
 }
 

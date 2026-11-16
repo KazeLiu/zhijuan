@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { BankFilters, BankItemSummary, BankListDTO, BankStatus, QuestionType } from '#shared/types'
+import type { BankFilters, BankItemSummary, BankListDTO, BankStatus, QuestionType, BankGenerationJobDTO } from '#shared/types'
 import { BANK_STATUS_LABELS, DIFFICULTY_LABELS, QUESTION_TYPE_LABELS } from '#shared/types'
 import { BANK_MISTAKE_MIN_SAMPLE } from '#shared/constants'
 definePageMeta({ layout: 'admin' })
@@ -28,21 +28,68 @@ async function reload() {
   if (data.value && page.value > data.value.totalPages) page.value = data.value.totalPages
 }
 function rate(item: BankItemSummary) { return item.mistakeStats.errorRate === null ? '—' : `${(item.mistakeStats.errorRate * 100).toFixed(1)}%` }
+const selected = ref<BankItemSummary[]>([])
+const deleting = ref(false)
+const operationError = ref('')
+const generationOpen = ref(false)
+const { data: generationJob, error: generationError, refresh: refreshGeneration } = await useAsyncData<BankGenerationJobDTO | null>('zj-bank-generation', () => apiFetch<BankGenerationJobDTO | null>('/api/admin/question-bank/generation', { silent: true }), { server: false })
+const generationActive = computed(() => generationJob.value?.status === 'queued' || generationJob.value?.status === 'running')
+const generationNeedsAttention = computed(() => generationJob.value?.status === 'succeeded' && (generationJob.value.conflicts.length > 0
+  || generationJob.value.requestedCount !== null && generationJob.value.createdCount < generationJob.value.requestedCount))
+let poll: ReturnType<typeof setInterval> | undefined
+let polling = false
+watch(generationActive, (active) => {
+  if (poll) clearInterval(poll)
+  if (active) poll = setInterval(async () => {
+    if (polling) return
+    polling = true
+    try { await refreshGeneration() } finally { polling = false }
+  }, 2000)
+}, { immediate: true })
+watch(() => generationJob.value?.status, (status, previous) => {
+  if (status === 'succeeded' && (previous === 'queued' || previous === 'running')) {
+    if (generationNeedsAttention.value) ElMessage.warning(`已入库 ${generationJob.value!.createdCount} 道题目，请查看未足量或答案冲突的结果`)
+    else ElMessage.success(`已入库 ${generationJob.value!.createdCount} 道题目`)
+    void reload()
+  } else if (status === 'failed' && (previous === 'queued' || previous === 'running') && generationJob.value!.createdCount > 0) {
+    void reload()
+  }
+})
+watch(data, () => { selected.value = [] })
+onBeforeUnmount(() => { if (poll) clearInterval(poll) })
+async function deleteSelected() {
+  if (!selected.value.length || deleting.value) return
+  const snapshot = selected.value.map((item) => ({ itemId: item.id, expectedVersion: item.version }))
+  try { await ElMessageBox.confirm(`确定删除选中的 ${snapshot.length} 道题目？删除不可恢复，已生成的试卷与答卷不受影响。`, '批量删除题目', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }) }
+  catch { return }
+  deleting.value = true; operationError.value = ''
+  try {
+    const result = await apiFetch<{ deletedCount: number }>('/api/admin/question-bank/batch-delete', { method: 'POST', body: { items: snapshot }, silent: true })
+    ElMessage.success(`已删除 ${result.deletedCount} 道题目`)
+    await reload()
+  } catch (cause) { operationError.value = describeApiError(cause, '删除失败，本次没有删除任何题目') }
+  finally { deleting.value = false }
+}
 </script>
 <template>
   <section class="bank-page">
-    <PageHeader title="题库" description="审核启用后可用于组卷；修改题目不会影响已创建的考试。">
+    <PageHeader title="题库" description="入库即可用于组卷；修改题目不会影响已创建的考试。">
       <template #actions>
-        <el-button type="primary" @click="openItem('', 'create')">新增题目</el-button>
-        <NuxtLink to="/admin/exams"><el-button>去场次出题</el-button></NuxtLink>
+        <el-button type="primary" @click="generationOpen = true">AI 生成</el-button>
+        <el-button @click="openItem('', 'create')">人工新增</el-button>
         <el-button :loading="pending" @click="reload">刷新</el-button>
       </template>
     </PageHeader>
+    <el-alert v-if="generationActive" type="info" :closable="false" title="题库生成任务进行中" class="bank-page__notice"><el-button text type="primary" @click="generationOpen = true">查看进度</el-button></el-alert>
+    <el-alert v-else-if="generationJob?.status === 'failed'" type="error" :closable="false" :title="generationJob.errorMessage" class="bank-page__notice"><el-button text type="primary" @click="generationOpen = true">查看并继续</el-button></el-alert>
+    <el-alert v-else-if="generationNeedsAttention" type="warning" :closable="false" :title="`题库任务已入库 ${generationJob?.createdCount} 道，存在未足量或答案冲突的结果`" class="bank-page__notice"><el-button text type="primary" @click="generationOpen = true">查看结果</el-button></el-alert>
+    <el-alert v-if="generationError" type="error" :closable="false" title="生成任务状态读取失败" class="bank-page__notice"><el-button @click="refreshGeneration()">重新加载</el-button></el-alert>
+    <el-alert v-if="operationError" type="error" :closable="false" :title="operationError" class="bank-page__notice" />
     <el-card shadow="never" class="bank-page__filters">
       <div class="bank-page__row">
         <el-input v-model="filters.query" placeholder="搜索题干" clearable aria-label="题干关键词" @keyup.enter="search" />
         <el-select v-model="filters.type" aria-label="题型筛选"><el-option label="全部题型" value="" /><el-option v-for="(label, type) in QUESTION_TYPE_LABELS" :key="type" :label="label" :value="type" /></el-select>
-        <el-select v-model="filters.status" aria-label="状态筛选"><el-option label="全部状态" value="" /><el-option v-for="(label, status) in BANK_STATUS_LABELS" :key="status" :label="label" :value="status" /></el-select>
+        <el-select v-model="filters.status" aria-label="状态筛选"><el-option label="全部状态" value="" /><el-option label="已启用" value="active" /><el-option label="已停用" value="disabled" /></el-select>
       </div>
       <AdminBankFilters v-model="scope" :knowledge-points="catalog?.knowledgePoints ?? []" :files="catalog?.files ?? []" />
       <div class="bank-page__row bank-page__controls">
@@ -53,18 +100,21 @@ function rate(item: BankItemSummary) { return item.mistakeStats.errorRate === nu
     </el-card>
     <StatePanel v-if="error" state="error" title="无法加载题库" :description="describeApiError(error, '请稍后重试')" @retry="refresh()" />
     <StatePanel v-else-if="pending && !data" state="loading" title="正在读取题库…" />
-    <StatePanel v-else-if="!data?.total" state="empty" title="暂无题目" description="可以人工新增，或从场次中选择已保存的题目入库。" action-text="清除筛选" @action="reset" />
+    <StatePanel v-else-if="!data?.total" state="empty" title="暂无题目" description="可用 AI 根据资料生成、人工新增，或从已有场次入库。" action-text="清除筛选" @action="reset" />
     <template v-else>
-      <el-table :data="data.items" row-key="id">
+      <div class="bank-page__selection"><span>已选 {{ selected.length }} 道</span><el-button type="danger" plain :disabled="!selected.length" :loading="deleting" @click="deleteSelected">删除所选</el-button></div>
+      <el-table :data="data.items" row-key="id" @selection-change="selected = $event">
+        <el-table-column type="selection" width="48" :selectable="() => !deleting" />
         <el-table-column label="题目" min-width="300"><template #default="{ row }">
-          <el-button link type="primary" class="bank-page__stem" @click="openItem(row.id)">{{ formatQuestionStem(row.stem, row.type) }}</el-button>
+          <el-button link type="primary" class="bank-page__stem" @click="openItem(row.id, 'edit')">{{ formatQuestionStem(row.stem, row.type) }}</el-button>
           <div class="bank-page__meta"><el-tag size="small" effect="plain">{{ QUESTION_TYPE_LABELS[row.type as QuestionType] }}</el-tag><span>{{ row.knowledgePoint }}</span><span>{{ DIFFICULTY_LABELS[row.difficulty as keyof typeof DIFFICULTY_LABELS] }}</span></div>
+          <div v-if="row.sourceGroup" class="zj-muted">{{ row.sourceGroup }}</div>
         </template></el-table-column>
         <el-table-column label="状态" width="100"><template #default="{ row }"><el-tag :type="row.status === 'active' ? 'success' : row.status === 'disabled' ? 'info' : 'warning'">{{ BANK_STATUS_LABELS[row.status as BankStatus] }}</el-tag></template></el-table-column>
         <el-table-column label="来源资料" min-width="160"><template #default="{ row }"><span v-for="source in row.sources" :key="source.libraryFileId" class="bank-page__file">{{ source.originalName }}</span></template></el-table-column>
         <el-table-column label="已作答" width="90"><template #default="{ row }">{{ row.mistakeStats.sampleSize }} 人</template></el-table-column>
         <el-table-column width="155"><template #header><el-tooltip content="按未满分统计，含部分得分，不含未作答"><span>错误率</span></el-tooltip></template><template #default="{ row }">
-          <span class="zj-tabular">{{ rate(row) }}</span>
+          <span class="zj-tabular">{{ rate(row as BankItemSummary) }}</span>
           <div v-if="row.mistakeStats.sampleSize === 0" class="zj-muted">暂无作答数据</div>
           <div v-else-if="row.mistakeStats.sampleSize < BANK_MISTAKE_MIN_SAMPLE" class="zj-muted">样本不足：{{ row.mistakeStats.sampleSize }} 人</div>
           <el-tag v-else-if="row.mistakeStats.isErrorProne" size="small" type="danger">易错</el-tag>
@@ -75,10 +125,13 @@ function rate(item: BankItemSummary) { return item.mistakeStats.errorRate === nu
       <el-pagination class="bank-page__pager" background layout="prev, pager, next, total" :current-page="page" :page-size="20" :total="data.total" @current-change="page = $event" />
     </template>
     <AdminBankItemDrawer v-model="drawer.open" :item-id="drawer.id" :intent="drawer.intent" @changed="reload" />
+    <AdminBankGenerateDialog v-model="generationOpen" :job="generationJob ?? null" @created="generationJob = $event" />
   </section>
 </template>
 <style scoped>
 .bank-page__filters { margin-bottom: 20px; }
+.bank-page__notice { margin-bottom: 16px; }
+.bank-page__selection { display: flex; gap: 16px; align-items: center; margin-bottom: 12px; }
 .bank-page__row { display: grid; grid-template-columns: 1.3fr 1fr 1.5fr; gap: 12px; margin-bottom: 12px; }
 .bank-page__controls { display: flex; align-items: center; flex-wrap: wrap; margin: 12px 0 0; }
 .bank-page__meta { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; color: var(--zj-text-muted); }

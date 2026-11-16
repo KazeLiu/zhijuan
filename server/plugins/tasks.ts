@@ -1,4 +1,4 @@
-import { useDb } from '../utils/db'
+import { useDb, withTransaction } from '../utils/db'
 import { failInterruptedJobs } from '../db/queries/jobs'
 import { startDeadlineSweeper } from '../tasks/deadline-sweeper'
 import { startGenerationWorker } from '../tasks/generation-worker'
@@ -12,6 +12,12 @@ import { startGenerationWorker } from '../tasks/generation-worker'
 export default defineNitroPlugin((nitroApp) => {
   const db = useDb()
   const interrupted = failInterruptedJobs(db, Date.now())
+  withTransaction(db, () => {
+    db.prepare(`UPDATE bank_generation_jobs SET status = 'failed', run_token = NULL,
+      error_message = CASE WHEN plan_json IS NULL THEN '服务重启，全文梳理已中断，可重新梳理'
+        ELSE '服务重启，生成已中断；已完成来源的题目已保留，可继续未完成来源' END,
+      updated_at = ? WHERE status = 'running'`).run(Date.now())
+  })
   if (interrupted > 0) {
     console.warn(`[tasks] ${interrupted} 个出题任务因服务重启标记为失败`)
   }

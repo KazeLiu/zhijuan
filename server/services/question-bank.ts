@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import type { BankAvailabilityDTO, BankFilters, BankItemDTO, BankItemSummary,
   BankListDTO, BankListQuery, BankQuestionInput, BankSourceRef } from '../../shared/types/question-bank'
-import type { QuestionType } from '../../shared/types/question'
 import { QUESTION_TYPES } from '../../shared/types/question'
 import { DEFAULT_PAGE_SIZE, DIFFICULTIES, MAX_DOCUMENTS_PER_EXAM, MAX_KNOWLEDGE_POINT_CHARS,
   MAX_QUESTIONS, MAX_QUOTE_CHARS, MAX_TOTAL_DOCUMENT_CHARS, MIN_QUOTE_CHARS, SCORE_TOTAL_UNITS } from '../../shared/constants'
@@ -21,7 +20,7 @@ import { allocateUnits, countTextChars, findQuestionContentIssue } from './gradi
 import { normalizeDocText, validateSourceRefs } from './documents'
 import { ApiFailure, throwApi } from '../utils/respond'
 import { withTransaction } from '../utils/db'
-import { shuffle } from '../utils/shuffle'
+import { bankSourceGroupKey, selectBankQuestions, BLUEPRINT_KEYS } from './bank-selection'
 import { FieldErrors, isPlainObject, parsePageValue, queryValue, readExpectedVersion } from '../utils/validate'
 
 export function normalizeKnowledgePoint(raw: unknown): string {
@@ -53,7 +52,7 @@ export function readBankFilters(body: Record<string, unknown>, query = false): B
 
 export function readBankListQuery(query: Record<string, unknown>): BankListQuery {
   const errors = new FieldErrors()
-  const status = errors.oneOf(query, 'status', '状态', ['draft', 'active', 'disabled'] as const)
+  const status = errors.oneOf(query, 'status', '状态', ['active', 'disabled'] as const)
   const type = errors.oneOf(query, 'type', '题型', QUESTION_TYPES)
   const errorProne = queryValue(query.errorProneOnly)
   if (errorProne !== undefined && errorProne !== 'true' && errorProne !== 'false') errors.add('errorProneOnly', '只接受 true 或 false')
@@ -78,6 +77,7 @@ function requireItem(db: DatabaseSync, id: string, version?: number): BankRecord
 
 function toSummary(item: BankRecord, stats: BankItemDTO['mistakeStats']): BankItemSummary {
   return { id: item.id, version: item.version, status: item.status, type: item.type, stem: item.stem,
+    sourceGroup: item.sourceGroup, sourceGroupKey: bankSourceGroupKey(item),
     knowledgePoint: item.knowledgePoint, difficulty: item.difficulty, sources: item.sources,
     createdAt: item.createdAt, updatedAt: item.updatedAt, mistakeStats: stats }
 }
@@ -86,8 +86,7 @@ function details(db: DatabaseSync, items: BankRecord[]): BankItemDTO[] {
   const stats = bankMistakeStats(db, items)
   return items.map((item) => ({ ...toSummary(item, stats.get(item.id)!), options: item.options,
     answerDefinition: item.answerDefinition, explanation: item.explanation, sourceRefs: item.sourceRefs,
-    originExamId: item.originExamId, originQuestionId: item.originQuestionId,
-    reviewedBy: item.reviewedBy, reviewedAt: item.reviewedAt }))
+    originExamId: item.originExamId, originQuestionId: item.originQuestionId }))
 }
 
 export function getBankItem(db: DatabaseSync, id: string): BankItemDTO {
@@ -125,13 +124,14 @@ export function validateBankSources(db: DatabaseSync, refs: BankSourceRef[]): vo
   }
 }
 
-function prepareBankQuestion(db: DatabaseSync, raw: unknown): BankQuestionInput {
+export function prepareBankQuestion(db: DatabaseSync, raw: unknown): BankQuestionInput {
   if (!isPlainObject(raw)) throw new ApiFailure('VALIDATION_FAILED', '题目内容必须是对象')
   const content = prepareQuestionContent(raw, 0)
   const issue = findQuestionContentIssue(content)
   if (issue) throw new ApiFailure('QUESTION_SET_INVALID', issue.reason, { field: issue.field })
   const errors = new FieldErrors()
   const difficulty = errors.oneOf(raw, 'difficulty', '难度', DIFFICULTIES) ?? 'normal'
+  const sourceGroup = errors.text(raw, 'sourceGroup', '同源考点', { max: 200, trim: true }) ?? ''
   errors.throwIfAny()
   if (!Array.isArray(raw.sourceRefs)) throw new ApiFailure('QUESTION_SET_INVALID', '请填写资料引用')
   const sourceRefs = raw.sourceRefs.map((value): BankSourceRef => {
@@ -143,7 +143,7 @@ function prepareBankQuestion(db: DatabaseSync, raw: unknown): BankQuestionInput 
   })
   validateBankSources(db, sourceRefs)
   return { type: content.type, stem: content.stem, options: content.options, answerDefinition: content.answerDefinition,
-    explanation: content.explanation, sourceRefs, knowledgePoint: normalizeKnowledgePoint(raw.knowledgePoint), difficulty }
+    explanation: content.explanation, sourceRefs, sourceGroup, knowledgePoint: normalizeKnowledgePoint(raw.knowledgePoint), difficulty }
 }
 
 function assertUnique(db: DatabaseSync, question: BankQuestionInput, exceptId?: string, index?: number): string {
@@ -167,28 +167,48 @@ export function createBankItem(db: DatabaseSync, raw: unknown, now: number): Ban
 export function saveBankItem(db: DatabaseSync, id: string, body: Record<string, unknown>, now: number): BankItemDTO {
   const version = readExpectedVersion(body)
   withTransaction(db, () => {
-    requireItem(db, id, version)
-    const question = prepareBankQuestion(db, body.question)
+    const existing = requireItem(db, id, version)
+    const raw = isPlainObject(body.question) ? { sourceGroup: existing.sourceGroup, ...body.question } : body.question
+    const question = prepareBankQuestion(db, raw)
     updateBankRecord(db, id, question, assertUnique(db, question, id), now)
   })
   return getBankItem(db, id)
 }
 
-export function changeBankState(db: DatabaseSync, id: string, version: number, action: 'approve' | 'disable' | 'delete', admin: string, now: number): void {
+export function changeBankState(db: DatabaseSync, id: string, version: number, action: 'enable' | 'disable' | 'delete', now: number): void {
   withTransaction(db, () => {
     const item = requireItem(db, id, version)
-    const allowed = action === 'disable' ? item.status === 'active' : item.status !== 'active'
-    if (!allowed) throw new ApiFailure('QUESTION_BANK_STATE_CONFLICT', action === 'delete' ? '请先停用题目再删除' : '题目状态已变化，请刷新后操作', { itemId: id, status: item.status })
+    const allowed = action === 'delete' || (action === 'disable' ? item.status === 'active' : item.status !== 'active')
+    if (!allowed) throw new ApiFailure('QUESTION_BANK_STATE_CONFLICT', '题目状态已变化，请刷新后操作', { itemId: id, status: item.status })
     if (action === 'delete') {
       db.prepare('DELETE FROM question_bank_items WHERE id = ?').run(id)
-    } else if (action === 'approve') {
+    } else if (action === 'enable') {
       prepareBankQuestion(db, item)
-      db.prepare("UPDATE question_bank_items SET status = 'active', reviewed_by = ?, reviewed_at = ?, version = version + 1, updated_at = ? WHERE id = ?")
-        .run(admin, now, now, id)
+      db.prepare("UPDATE question_bank_items SET status = 'active', version = version + 1, updated_at = ? WHERE id = ?")
+        .run(now, id)
     } else {
       db.prepare("UPDATE question_bank_items SET status = 'disabled', version = version + 1, updated_at = ? WHERE id = ?").run(now, id)
     }
   })
+}
+
+export function deleteBankItems(db: DatabaseSync, body: Record<string, unknown>): number {
+  const rows = body.items
+  if (!Array.isArray(rows) || !rows.length || rows.length > 100) throw new ApiFailure('VALIDATION_FAILED', '请选择 1–100 道题目')
+  return withTransaction(db, () => {
+    const seen = new Set<string>()
+    for (const raw of rows) {
+      if (!isPlainObject(raw) || typeof raw.itemId !== 'string' || seen.has(raw.itemId)) throw new ApiFailure('VALIDATION_FAILED', '题目 ID 缺失或重复')
+      seen.add(raw.itemId)
+      requireItem(db, raw.itemId, readExpectedVersion(raw))
+    }
+    for (const id of seen) db.prepare('DELETE FROM question_bank_items WHERE id = ?').run(id)
+    return seen.size
+  })
+}
+
+export function sourceGroups(db: DatabaseSync): string[] {
+  return (db.prepare("SELECT DISTINCT source_group FROM question_bank_items WHERE source_group != '' ORDER BY source_group").all() as Array<{ source_group: string }>).map((row) => row.source_group)
 }
 
 function requireExam(db: DatabaseSync, id: string, version?: number, editable = false): ExamRow {
@@ -225,7 +245,8 @@ export function importExamQuestions(db: DatabaseSync, examId: string, body: Reco
         if (!libraryFileId) throw new ApiFailure('QUESTION_SET_INVALID', '来源资料缺少有效资料库记录，无法入库', { index, questionId: original.id, documentId: ref.documentId })
         return { libraryFileId, locator: ref.locator, quote: ref.quote }
       })
-      const question = prepareBankQuestion(db, { ...original, sourceRefs, knowledgePoint: raw.knowledgePoint, difficulty: raw.difficulty ?? exam.blueprint.difficulty })
+      const origin = original.bankOrigin ? findBankRecord(db, original.bankOrigin.itemId) : undefined
+      const question = prepareBankQuestion(db, { ...original, sourceGroup: origin?.sourceGroup ?? '', sourceRefs, knowledgePoint: raw.knowledgePoint, difficulty: raw.difficulty ?? exam.blueprint.difficulty })
       const key = assertUnique(db, question, undefined, index)
       const duplicateIndex = keys.get(key)
       if (duplicateIndex !== undefined) throw new ApiFailure('QUESTION_BANK_DUPLICATE', `所选第 ${duplicateIndex + 1} 项与第 ${index + 1} 项题干和选项重复，整批未写入`, { index, duplicateIndex })
@@ -241,17 +262,9 @@ export function importExamQuestions(db: DatabaseSync, examId: string, body: Reco
   return details(db, findBankRecords(db, ids))
 }
 
-const blueprintKeys = { single_choice: 'singleChoice', multiple_choice: 'multipleChoice', true_false: 'trueFalse', fill_blank: 'fillBlank' } as const
 function availability(exam: ExamRow, items: BankRecord[]): BankAvailabilityDTO {
-  const required = {} as Record<QuestionType, number>
-  const available = {} as Record<QuestionType, number>
-  const missing = {} as Record<QuestionType, number>
-  for (const type of QUESTION_TYPES) {
-    required[type] = exam.blueprint[blueprintKeys[type]]
-    available[type] = items.filter((item) => item.type === type).length
-    missing[type] = Math.max(0, required[type] - available[type])
-  }
-  return { examVersion: exam.version, required, available, missing }
+  const { picked: _, ...counts } = selectBankQuestions(items, exam.blueprint)
+  return { examVersion: exam.version, ...counts }
 }
 
 export function getBankAvailability(db: DatabaseSync, examId: string, filters: BankFilters): BankAvailabilityDTO {
@@ -274,8 +287,12 @@ function attachSources(db: DatabaseSync, examId: string, items: BankRecord[], no
 }
 
 export function applyBankQuestions(db: DatabaseSync, examId: string, body: Record<string, unknown>, now: number): ExamRow {
+  return withTransaction(db, () => applyBankQuestionsInTransaction(db, examId, body, now))
+}
+
+/** 调用方持有事务；滚动出题需要把建场、组卷与发布整体提交。 */
+export function applyBankQuestionsInTransaction(db: DatabaseSync, examId: string, body: Record<string, unknown>, now: number, preferLeastUsed = false): ExamRow {
   const version = readExpectedVersion(body)
-  return withTransaction(db, () => {
     const exam = requireExam(db, examId, version, true)
     let picked: BankRecord[]
     let existing: QuestionInsert[] = []
@@ -284,9 +301,12 @@ export function applyBankQuestions(db: DatabaseSync, examId: string, body: Recor
       const total = blueprintTotal(exam.blueprint)
       if (total < 1 || total > MAX_QUESTIONS) throw new ApiFailure('VALIDATION_FAILED', '请先保存合计 1–100 道题的题数设定')
       const pool = listBankRecords(db, { ...readBankFilters(body.filters), status: 'active' })
-      const counts = availability(exam, pool)
-      if (QUESTION_TYPES.some((type) => counts.missing[type] > 0)) throw new ApiFailure('QUESTION_BANK_SHORTAGE', '可用题目不足，请调整范围、题数或主动补题', counts)
-      picked = QUESTION_TYPES.flatMap((type) => shuffle(pool.filter((item) => item.type === type)).slice(0, counts.required[type]))
+      const history = preferLeastUsed ? new Map((db.prepare(`SELECT q.source_bank_group_key AS key, MAX(e.starts_at) AS used_at
+        FROM questions q JOIN exams e ON e.id = q.exam_id WHERE e.status = 'published' AND q.source_bank_group_key IS NOT NULL
+        GROUP BY q.source_bank_group_key`).all() as Array<{ key: string; used_at: number }>).map((row) => [row.key, row.used_at])) : undefined
+      const { picked: selected, ...counts } = selectBankQuestions(pool, exam.blueprint, history)
+      if (QUESTION_TYPES.some((type) => counts.missing[type] > 0)) throw new ApiFailure('QUESTION_BANK_SHORTAGE', '排除同源题后可用考点不足，请调整题数或补充独立考点', { examVersion: exam.version, ...counts })
+      picked = selected
     } else if (body.mode === 'manual') {
       const rows = body.items
       if (!Array.isArray(rows) || !rows.length || rows.length > MAX_QUESTIONS) throw new ApiFailure('VALIDATION_FAILED', '请选择 1–100 道题目')
@@ -296,7 +316,7 @@ export function applyBankQuestions(db: DatabaseSync, examId: string, body: Recor
         seen.add(raw.itemId)
         const expectedVersion = readExpectedVersion(raw)
         const item = findBankRecord(db, raw.itemId)
-        if (!item || item.status !== 'active') throw new ApiFailure('QUESTION_BANK_ITEM_UNAVAILABLE', '所选题目已删除、停用或待审核，请调整选择', { itemId: raw.itemId, reason: item?.status ?? 'deleted' })
+        if (!item || item.status !== 'active') throw new ApiFailure('QUESTION_BANK_ITEM_UNAVAILABLE', '所选题目已删除或未启用，请调整选择', { itemId: raw.itemId, reason: item?.status ?? 'deleted' })
         if (item.version !== expectedVersion) throw new ApiFailure('VERSION_CONFLICT', '所选题目已编辑，请重新预览后选择', { itemId: item.id, serverVersion: item.version })
         return item
       })
@@ -304,9 +324,12 @@ export function applyBankQuestions(db: DatabaseSync, examId: string, body: Recor
       if (existing.length + picked.length > MAX_QUESTIONS) throw new ApiFailure('VALIDATION_FAILED', `追加后不能超过 ${MAX_QUESTIONS} 题`)
       const origins = new Set(existing.map((question) => question.bankOrigin?.itemId))
       const keys = new Set(existing.map(bankContentKey))
+      const groups = new Set(existing.flatMap((question) => question.bankGroupKey ? [question.bankGroupKey] : []))
       for (const item of picked) {
         if (origins.has(item.id) || keys.has(item.contentKey)) throw new ApiFailure('QUESTION_BANK_ALREADY_ADDED', '本场已有相同来源或相同题干和选项，不能重复追加', { itemId: item.id })
+        if (groups.has(bankSourceGroupKey(item))) throw new ApiFailure('QUESTION_BANK_ALREADY_ADDED', '同一份试卷每个同源考点只能选一道题，请调整选择', { itemId: item.id })
         keys.add(item.contentKey)
+        groups.add(bankSourceGroupKey(item))
       }
     } else throw new ApiFailure('VALIDATION_FAILED', '组卷方式必须是 random 或 manual')
 
@@ -315,6 +338,7 @@ export function applyBankQuestions(db: DatabaseSync, examId: string, body: Recor
       id: randomUUID(), examId, position: 0, maxScoreUnits: 0, type: item.type, stem: item.stem,
       options: item.options, answerDefinition: item.answerDefinition, explanation: item.explanation,
       bankOrigin: { itemId: item.id, version: item.version },
+      bankGroupKey: bankSourceGroupKey(item),
       sourceRefs: item.sourceRefs.map((ref) => ({ documentId: mapping.get(ref.libraryFileId)!, locator: ref.locator, quote: ref.quote })),
     }))
     const final = [...existing, ...additions]
@@ -325,11 +349,10 @@ export function applyBankQuestions(db: DatabaseSync, examId: string, body: Recor
     if (body.mode === 'manual') {
       const counts = countByType(listQuestions(db, examId))
       const blueprint = { ...exam.blueprint }
-      for (const type of QUESTION_TYPES) blueprint[blueprintKeys[type]] = counts[type]
+      for (const type of QUESTION_TYPES) blueprint[BLUEPRINT_KEYS[type]] = counts[type]
       updateExamDraft(db, examId, { ...exam, blueprint }, now)
     } else touchExamVersion(db, examId, now)
     return findExam(db, examId)!
-  })
 }
 
 export function knowledgePoints(db: DatabaseSync): string[] {

@@ -12,10 +12,14 @@ const page = ref(1)
 const items = ref<BankListDTO | null>(null)
 const loading = ref(false)
 const loadError = ref('')
-const selected = ref<Record<string, { itemId: string; expectedVersion: number; stem: string; type: QuestionType }>>({})
+const selected = ref<Record<string, { itemId: string; expectedVersion: number; stem: string; type: QuestionType; groupKey: string }>>({})
 const preview = reactive({ open: false, id: '' })
 const selectedList = computed(() => Object.values(selected.value))
 const imported = computed(() => new Set(props.exam.questions.map((question) => question.bankOrigin?.itemId)))
+const importedGroups = computed(() => new Set(props.exam.questions.flatMap((question) => question.bankOrigin?.groupKey ? [question.bankOrigin.groupKey] : [])))
+function sameGroupSelected(row: BankItemSummary): boolean {
+  return importedGroups.value.has(row.sourceGroupKey) || selectedList.value.some((item) => item.itemId !== row.id && item.groupKey === row.sourceGroupKey)
+}
 let request = 0
 async function load() {
   const token = ++request; loading.value = true; loadError.value = ''
@@ -34,7 +38,7 @@ watch(open, (visible) => {
 })
 function search() { page.value = 1; void load() }
 function toggle(row: BankItemSummary, checked: boolean) {
-  if (checked) selected.value[row.id] = { itemId: row.id, expectedVersion: row.version, stem: row.stem, type: row.type }
+  if (checked) selected.value[row.id] = { itemId: row.id, expectedVersion: row.version, stem: row.stem, type: row.type, groupKey: row.sourceGroupKey }
   else delete selected.value[row.id]
 }
 function removeConflict() { delete selected.value[props.conflictItemId]; emit('clearError'); void load() }
@@ -53,13 +57,15 @@ function removeConflict() { delete selected.value[props.conflictItemId]; emit('c
     <StatePanel v-else-if="loading" state="loading" title="正在读取可用题目…" />
     <el-table v-else :data="items?.items ?? []" row-key="id" empty-text="没有符合条件的已启用题目">
       <el-table-column width="65" label="选择"><template #default="{ row }">
-        <el-checkbox :aria-label="`选择题目：${row.stem}`" :disabled="busy || imported.has(row.id) || (!selected[row.id] && selectedList.length >= 100)"
-          :model-value="Boolean(selected[row.id])" @update:model-value="toggle(row, Boolean($event))" />
+        <el-checkbox :aria-label="`选择题目：${row.stem}`" :disabled="busy || imported.has(row.id) || (!selected[row.id] && (selectedList.length >= 100 || sameGroupSelected(row as BankItemSummary)))"
+          :model-value="Boolean(selected[row.id])" @update:model-value="toggle(row as BankItemSummary, Boolean($event))" />
       </template></el-table-column>
       <el-table-column label="题目" min-width="280"><template #default="{ row }">
         <p class="bank-picker__stem">{{ formatQuestionStem(row.stem, row.type) }}</p>
         <span class="zj-muted">{{ QUESTION_TYPE_LABELS[row.type as QuestionType] }} · {{ row.knowledgePoint }}</span>
         <el-tag v-if="imported.has(row.id)" size="small" type="info">已添加</el-tag>
+        <el-tag v-else-if="sameGroupSelected(row as BankItemSummary)" size="small" type="info">同源考点已选</el-tag>
+        <div v-if="row.sourceGroup" class="zj-muted">{{ row.sourceGroup }}</div>
       </template></el-table-column>
       <el-table-column label="操作" width="90"><template #default="{ row }"><el-button text type="primary" :disabled="busy" @click="preview.id = row.id; preview.open = true">预览</el-button></template></el-table-column>
     </el-table>

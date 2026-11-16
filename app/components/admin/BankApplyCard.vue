@@ -68,8 +68,8 @@ function openPicker() { error.value = ''; conflictItemId.value = ''; manualVersi
     <el-table :data="rows" size="small">
       <el-table-column prop="label" label="题型" />
       <el-table-column label="所需"><template #default="{ row }">{{ row.required ?? '—' }}</template></el-table-column>
-      <el-table-column label="可用"><template #default="{ row }">{{ row.available ?? '—' }}</template></el-table-column>
-      <el-table-column label="缺少"><template #default="{ row }"><span :class="{ 'bank-apply__short': row.missing > 0 }">{{ row.missing ?? '—' }}</span></template></el-table-column>
+      <el-table-column label="可用考点"><template #default="{ row }">{{ row.available ?? '—' }}</template></el-table-column>
+      <el-table-column label="互斥后缺少"><template #default="{ row }"><span :class="{ 'bank-apply__short': row.missing > 0 }">{{ row.missing ?? '—' }}</span></template></el-table-column>
     </el-table>
     <p v-if="unsaved" class="bank-apply__short">请先保存或放弃页面中的未保存修改，再进行组卷。</p>
     <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
@@ -79,7 +79,7 @@ function openPicker() { error.value = ''; conflictItemId.value = ''; manualVersi
       <el-button :disabled="blocked" @click="openPicker">手动挑题 · 追加</el-button>
       <NuxtLink to="/admin/question-bank"><el-button text>管理题库</el-button></NuxtLink>
     </div>
-    <p v-if="counts && shortage" class="zj-muted">题目不足，可调整筛选范围或上方题数，也可使用下方 AI 出题补充新题。</p>
+    <p v-if="counts && shortage" class="zj-muted">同源题每卷最多选一道；独立考点不足，可调整范围或题数，或去题库用 AI 补题。</p>
     <AdminBankPickerDialog v-model="pickerOpen" :exam="exam" :initial-filters="filters" :busy="busy" :blocked="blocked" :error="error" :conflict-item-id="conflictItemId"
       @clear-error="error = ''; conflictItemId = ''" @confirm="apply({ mode: 'manual', expectedVersion: manualVersion, items: $event })" />
   </section>

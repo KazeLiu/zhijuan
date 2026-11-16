@@ -55,6 +55,8 @@ function runMigrations(db: DatabaseSync): void {
     db.exec('BEGIN IMMEDIATE')
     try {
       db.exec(migration.sql)
+      // 存量清洗（JSON 逐行改写等纯 SQL 做不到的部分）：与 SQL 同事务，抛错即整体回滚
+      migration.run?.(db)
       db.prepare('INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)').run(
         migration.version,
         migration.name,

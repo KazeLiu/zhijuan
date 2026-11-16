@@ -12,7 +12,7 @@ export function bankContentKey(question: Pick<QuestionContentInput, 'type' | 'st
 }
 
 /** 内容键不包含答案，统计可比性另行比较完整判分定义。 */
-function comparableKey(question: Pick<QuestionContentInput, 'type' | 'stem' | 'options' | 'answerDefinition'>): string {
+export function bankComparableKey(question: Pick<QuestionContentInput, 'type' | 'stem' | 'options' | 'answerDefinition'>): string {
   const definition = question.answerDefinition
   return JSON.stringify([
     bankContentKey(question), [...definition.correctOptionIds].sort(),
@@ -22,13 +22,13 @@ function comparableKey(question: Pick<QuestionContentInput, 'type' | 'stem' | 'o
 }
 
 export function bankMistakeStats(db: DatabaseSync, items: BankRecord[]): Map<string, BankMistakeStats> {
-  const expected = new Map(items.map((item) => [item.id, comparableKey(item)]))
+  const expected = new Map(items.map((item) => [item.id, bankComparableKey(item)]))
   const knownQuestions = new Map<string, string>()
   const people = new Map(items.map((item) => [item.id, new Map<string, 'unanswered' | 'correct' | 'partial' | 'zero'>()]))
   for (const row of listBankSamples(db, items.map((item) => item.id))) {
     let content = knownQuestions.get(row.question_id)
     if (content === undefined) {
-      content = comparableKey({ type: row.type, stem: row.stem,
+      content = bankComparableKey({ type: row.type, stem: row.stem,
         options: JSON.parse(row.options_json) as QuestionContentInput['options'],
         answerDefinition: JSON.parse(row.answer_definition_json) as QuestionContentInput['answerDefinition'] })
       knownQuestions.set(row.question_id, content)

@@ -23,6 +23,7 @@ export interface QuestionRow {
   sourceRefs: SourceRef[]
   maxScoreUnits: number
   bankOrigin: { itemId: string; version: number } | null
+  bankGroupKey: string | null
 }
 
 interface RawQuestionRow {
@@ -38,6 +39,7 @@ interface RawQuestionRow {
   max_score_units: number
   source_bank_item_id: string | null
   source_bank_item_version: number | null
+  source_bank_group_key?: string | null
 }
 
 function parseArray<T>(raw: string): T[] {
@@ -94,6 +96,7 @@ function mapQuestionRow(row: RawQuestionRow): QuestionRow {
         typeof ref?.documentId === 'string' && typeof ref?.locator === 'string' && typeof ref?.quote === 'string',
     ),
     maxScoreUnits: Number(row.max_score_units),
+    bankGroupKey: row.source_bank_group_key ?? null,
     bankOrigin: row.source_bank_item_id === null ? null : {
       itemId: row.source_bank_item_id,
       version: row.source_bank_item_version!,
@@ -101,20 +104,18 @@ function mapQuestionRow(row: RawQuestionRow): QuestionRow {
   }
 }
 
-const QUESTION_COLUMNS = `id, exam_id, position, type, stem, options_json, answer_definition_json,
-  explanation, source_refs_json, max_score_units, source_bank_item_id, source_bank_item_version`
-
 /** 按 position 升序读取整卷题目 */
 export function listQuestions(db: DatabaseSync, examId: string): QuestionRow[] {
+  // 迁移 007 重判分时也会读取题目，此时迁移 009 的分组列还不存在。
   const rows = db
-    .prepare(`SELECT ${QUESTION_COLUMNS} FROM questions WHERE exam_id = ? ORDER BY position ASC`)
+    .prepare('SELECT * FROM questions WHERE exam_id = ? ORDER BY position ASC')
     .all(examId) as unknown as RawQuestionRow[]
   return rows.map(mapQuestionRow)
 }
 
 export function findQuestion(db: DatabaseSync, examId: string, questionId: string): QuestionRow | undefined {
   const row = db
-    .prepare(`SELECT ${QUESTION_COLUMNS} FROM questions WHERE exam_id = ? AND id = ?`)
+    .prepare('SELECT * FROM questions WHERE exam_id = ? AND id = ?')
     .get(examId, questionId) as RawQuestionRow | undefined
   return row ? mapQuestionRow(row) : undefined
 }
@@ -131,13 +132,14 @@ export interface QuestionInsert {
   sourceRefs: SourceRef[]
   maxScoreUnits: number
   bankOrigin?: { itemId: string; version: number } | null
+  bankGroupKey?: string | null
 }
 
 export function insertQuestion(db: DatabaseSync, question: QuestionInsert, now: number): void {
   db.prepare(
     `INSERT INTO questions (id, exam_id, position, type, stem, options_json, answer_definition_json,
-      explanation, source_refs_json, max_score_units, created_at, updated_at, source_bank_item_id, source_bank_item_version)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      explanation, source_refs_json, max_score_units, created_at, updated_at, source_bank_item_id, source_bank_item_version, source_bank_group_key)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     question.id,
     question.examId,
@@ -153,6 +155,7 @@ export function insertQuestion(db: DatabaseSync, question: QuestionInsert, now: 
     now,
     question.bankOrigin?.itemId ?? null,
     question.bankOrigin?.version ?? null,
+    question.bankGroupKey ?? null,
   )
 }
 
@@ -190,7 +193,7 @@ export function toQuestionAdminDTO(row: QuestionRow): QuestionAdminDTO {
     explanation: row.explanation,
     sourceRefs: row.sourceRefs,
     maxScoreUnits: row.maxScoreUnits,
-    bankOrigin: row.bankOrigin ? { ...row.bankOrigin, deleted: false } : null,
+    bankOrigin: row.bankOrigin ? { ...row.bankOrigin, deleted: false, groupKey: row.bankGroupKey } : null,
   }
 }
 

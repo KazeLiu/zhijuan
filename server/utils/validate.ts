@@ -31,6 +31,27 @@ export async function readJsonObject(event: H3Event): Promise<Record<string, unk
   return parsed
 }
 
+/** 读取 JSON 对象请求体；空请求体当作 {}（用于无必填参数的 POST，如生命周期动作） */
+export async function readOptionalJsonObject(event: H3Event): Promise<Record<string, unknown>> {
+  let raw = ''
+  try {
+    raw = (await readRawBody(event, 'utf8')) ?? ''
+  } catch {
+    throw new ApiFailure('BAD_REQUEST', '无法读取请求体')
+  }
+  if (typeof raw !== 'string' || raw.trim() === '') return {}
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    throw new ApiFailure('INVALID_JSON', '请求体不是合法的 JSON')
+  }
+  if (!isPlainObject(parsed)) {
+    throw new ApiFailure('BAD_REQUEST', '请求体必须是 JSON 对象')
+  }
+  return parsed
+}
+
 /** 是否为普通对象（排除数组与 null） */
 export function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)

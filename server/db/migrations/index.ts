@@ -5,5 +5,12 @@ import { migration as m001 } from './001-init'
 import { migration as m002 } from './002-library'
 import { migration as m003 } from './003-job-output'
 import { migration as m004 } from './004-question-bank'
+import { migration as m005 } from './005-exam-lifecycle'
+import { migration as m006 } from './006-job-batches'
+import { migration as m007 } from './007-bank-keys-and-regrading'
+import { migration as m008 } from './008-bank-direct-activation'
+import { migration as m009 } from './009-rolling-question-bank'
+import { migration as m010 } from './010-bank-source-generation'
+import { migration as m011 } from './011-bank-targeted-generation'
 
-export const migrations: Migration[] = [m001, m002, m003, m004]
+export const migrations: Migration[] = [m001, m002, m003, m004, m005, m006, m007, m008, m009, m010, m011]

@@ -2,6 +2,7 @@ import { useDb } from '../utils/db'
 import { claimNextQueuedJob } from '../db/queries/jobs'
 import { findProviderSettings } from '../db/queries/settings'
 import { executeGenerationJob } from '../services/generation'
+import { executeNextBankGeneration } from '../services/bank-generation'
 import type { TaskHandle } from './deadline-sweeper'
 
 const WORKER_INTERVAL_MS = 1000
@@ -24,7 +25,10 @@ export function startGenerationWorker(intervalMs = WORKER_INTERVAL_MS): TaskHand
         baseUrl: settings.baseUrl,
         now,
       })
-      if (!jobId) return
+      if (!jobId) {
+        await executeNextBankGeneration(db)
+        return
+      }
       await executeGenerationJob(db, jobId)
     } catch (error) {
       console.error('[generation-worker] 任务执行失败', error)

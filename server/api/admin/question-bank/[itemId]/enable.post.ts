@@ -7,11 +7,11 @@ import { changeBankState, getBankItem } from '../../../../services/question-bank
 export default defineEventHandler(async (event) => {
   try {
     const now = Date.now()
-    const admin = requireAdmin(event, now)
+    requireAdmin(event, now)
     const id = readParam(event, 'itemId')
     const version = readExpectedVersion(await readJsonObject(event))
     const db = useDb()
-    changeBankState(db, id, version, 'approve', admin.name, now)
+    changeBankState(db, id, version, 'enable', now)
     return ok(event, getBankItem(db, id))
   } catch (error) { return failFrom(event, error) }
 })
