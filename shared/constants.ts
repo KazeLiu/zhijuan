@@ -6,8 +6,8 @@
 /** 满分计分单位：1 单位 = 0.01 分，整卷合计必须是 10000 */
 export const SCORE_TOTAL_UNITS = 10000
 
-/** 及格线：6000 单位 = 60.00 分，仅用于统计与结果展示 */
-export const PASS_SCORE_UNITS = 6000
+/** 及格线：9000 单位 = 90.00 分，仅用于统计与结果展示 */
+export const PASS_SCORE_UNITS = 9000
 
 /** 单场题数上下限 */
 export const MIN_QUESTIONS = 1
@@ -46,6 +46,9 @@ export const TRUE_FALSE_OPTIONS = [
 
 /** 分页：考生列表、我的记录固定每页 20 */
 export const DEFAULT_PAGE_SIZE = 20
+
+/** 题库单页及单次批量删除上限 */
+export const MAX_BANK_PAGE_SIZE = 500
 
 /** 会话有效期（天）——与 runtimeConfig.sessionTtlDays 默认值一致 */
 export const DEFAULT_SESSION_TTL_DAYS = 7

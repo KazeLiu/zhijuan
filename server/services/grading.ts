@@ -44,9 +44,9 @@ export function countTextChars(value: string): number {
 
 /* ------------------------------ 填空归一化与判分（§7.3） ------------------------------ */
 
-export function normalizeBlank(input: string, caseSensitive: boolean): string {
-  const base = input.normalize('NFC').trim().replace(/\s+/gu, ' ')
-  return caseSensitive ? base : base.toLowerCase()
+/** 填空归一化（§7.3）：NFC + 去两端空白 + 内部连续空白折叠 + 小写。历史 caseSensitive 标志一律忽略 */
+export function normalizeBlank(input: string): string {
+  return input.normalize('NFC').trim().replace(/\s+/gu, ' ').toLowerCase()
 }
 
 export interface GradableQuestion {
@@ -127,11 +127,9 @@ export function gradeAnswer(question: GradableQuestion, answer: CandidateAnswer 
     let total = 0
     blanks.forEach((blank, index) => {
       const submitted = answer.values[blank.id] ?? ''
-      const candidate = normalizeBlank(submitted, blank.caseSensitive)
+      const candidate = normalizeBlank(submitted)
       if (candidate === '') return
-      const hit = blank.acceptedAnswers.some(
-        (accepted) => normalizeBlank(accepted, blank.caseSensitive) === candidate,
-      )
+      const hit = blank.acceptedAnswers.some((accepted) => normalizeBlank(accepted) === candidate)
       if (hit) total += units[index] ?? 0
     })
     return total
@@ -290,6 +288,7 @@ export function findQuestionContentIssue(question: Omit<QuestionStructureCandida
     if (accepted.length === 0) {
       return { field: 'answerDefinition', reason: '每个空位至少需要一个可接受答案' }
     }
+    // 保存入口已按统一规则去重，存量题中原本允许的大小写变体仍视为有效答案。
     if (new Set(accepted).size !== accepted.length) {
       return { field: 'answerDefinition', reason: '同一空位的可接受答案不能重复' }
     }
@@ -297,9 +296,6 @@ export function findQuestionContentIssue(question: Omit<QuestionStructureCandida
       if (countTextChars(item) > MAX_BLANK_ANSWER_CHARS) {
         return { field: 'answerDefinition', reason: `每个可接受答案不能超过 ${MAX_BLANK_ANSWER_CHARS} 字` }
       }
-    }
-    if (typeof blank.caseSensitive !== 'boolean') {
-      return { field: 'answerDefinition', reason: '空位必须显式标注是否区分大小写' }
     }
   }
   return checkStemPlaceholders(question.stem, blanks)

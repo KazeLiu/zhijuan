@@ -83,6 +83,15 @@ export interface AttemptResultDTO {
   questions: QuestionResultDTO[] | null
 }
 
+/** 个人错题集单题：本人已公开的未满分题目（含部分得分、零分与未作答） */
+export interface MyMistakeQuestionDTO extends Omit<QuestionResultDTO, 'blanks' | 'sourceRefs'> {
+  attemptId: string
+  examId: string
+  examTitle: string
+  examTimeZone: string
+  submittedAt: EpochMs
+}
+
 /** 「我的记录」列表行 */
 export interface MyAttemptRowDTO {
   attemptId: string

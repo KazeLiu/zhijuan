@@ -3,7 +3,7 @@
  * 模型设置（契约 §9.2 / §8.4 #12、#13、#14）：
  * Base URL / API Key / 模型 / 思考强度；API Key 只回显「已配置」，清空即清除；可刷新模型列表。
  */
-import type { ModelRefreshResult, SettingsDTO, SettingsUpdateRequest, ThinkingLevel } from '#shared/types'
+import type { ModelRefreshResult, ModelTestResult, SettingsDTO, SettingsUpdateRequest, ThinkingLevel } from '#shared/types'
 import { THINKING_LEVEL_LABELS, THINKING_LEVELS } from '#shared/types'
 
 definePageMeta({ layout: 'admin' })
@@ -40,6 +40,7 @@ const saveError = ref('')
 const saveSuccess = ref('')
 const models = ref<string[]>([])
 const fieldErrors = ref<Record<string, string>>({})
+const connectionTest = reactive({ running: false, result: null as ModelTestResult | null, error: '' })
 
 watch(
   data,
@@ -76,6 +77,36 @@ const dirty = computed(() => {
 })
 
 const canSave = computed(() => dirty.value && !(form.clearApiKey && form.apiKey.trim().length > 0))
+const canTest = computed(() => Boolean(form.baseUrl.trim() && form.modelId.trim()) && !(form.clearApiKey && form.apiKey.trim()))
+watch(() => [form.baseUrl, form.modelId, form.apiKey, form.clearApiKey, form.thinkingLevel], () => {
+  connectionTest.result = null
+  connectionTest.error = ''
+})
+
+function settingsPayload(): SettingsUpdateRequest {
+  const payload: SettingsUpdateRequest = {
+    baseUrl: form.baseUrl.trim(), modelId: form.modelId.trim() || null, thinkingLevel: form.thinkingLevel,
+  }
+  if (form.apiKey.trim()) payload.apiKey = form.apiKey.trim()
+  else if (form.clearApiKey) payload.apiKey = null
+  return payload
+}
+
+async function testConnection(): Promise<void> {
+  if (!canTest.value || connectionTest.running) return
+  connectionTest.running = true
+  connectionTest.result = null
+  connectionTest.error = ''
+  fieldErrors.value = {}
+  try {
+    connectionTest.result = await apiFetch<ModelTestResult>('/api/admin/models/test', {
+      method: 'POST', body: settingsPayload(), silent: true,
+    })
+  } catch (cause) {
+    fieldErrors.value = readFieldErrors(cause)
+    connectionTest.error = describeApiError(cause, '连接测试失败')
+  } finally { connectionTest.running = false }
+}
 
 async function save(): Promise<void> {
   saveError.value = ''
@@ -88,17 +119,9 @@ async function save(): Promise<void> {
   }
   saving.value = true
   try {
-    const payload: SettingsUpdateRequest = {
-      baseUrl: form.baseUrl.trim(),
-      modelId: form.modelId.trim() ? form.modelId.trim() : null,
-      thinkingLevel: form.thinkingLevel,
-    }
-    if (form.apiKey.trim()) payload.apiKey = form.apiKey.trim()
-    else if (form.clearApiKey) payload.apiKey = null
-
     const updated = await apiFetch<SettingsDTO>('/api/admin/settings', {
       method: 'PUT',
-      body: payload,
+      body: settingsPayload(),
       silent: true,
     })
     data.value = updated
@@ -140,7 +163,7 @@ async function refreshModels(): Promise<void> {
   <section class="settings">
     <PageHeader title="模型设置" description="AI 出题使用 OpenAI 兼容的 /chat/completions 接口；填 Base URL 与模型即可，API Key 可选（内网无鉴权的模型端点留空），Key 只保存在服务端。可设置思考强度。">
       <template #actions>
-        <el-button :loading="pending" @click="refresh()">重新读取</el-button>
+        <el-button :loading="pending" :disabled="saving || connectionTest.running" @click="refresh()">重新读取</el-button>
       </template>
     </PageHeader>
 
@@ -157,7 +180,7 @@ async function refreshModels(): Promise<void> {
     <StatePanel v-else-if="pending && !data" state="loading" title="正在读取设置…" :loading-rows="6" />
 
     <el-card v-else-if="data" shadow="never" class="settings__card">
-      <el-form label-position="top" class="settings__form" @submit.prevent="save">
+      <el-form label-position="top" class="settings__form" :disabled="saving || refreshingModels || connectionTest.running" @submit.prevent="save">
         <el-form-item label="Base URL（OpenAI 兼容端点根地址）" :error="fieldErrors.baseUrl">
           <el-input v-model="form.baseUrl" placeholder="https://api.example.com/v1" />
           <p class="zj-muted settings__hint">出题请求会发往 <code>{baseUrl}/chat/completions</code>，只接受 http/https。</p>
@@ -218,10 +241,13 @@ async function refreshModels(): Promise<void> {
 
         <div class="settings__actions">
           <el-button type="primary" :loading="saving" :disabled="!canSave" @click="save">保存设置</el-button>
+          <el-button :loading="connectionTest.running" :disabled="!canTest" @click="testConnection">测试连接</el-button>
           <span class="zj-muted settings__hint">
-            最近更新：{{ data?.updatedAt ? formatDateTimeSeconds(data.updatedAt, browserTimeZone()) : '尚未保存过' }}
+            {{ dirty ? '测试使用当前填写配置，不保存。' : `最近更新：${data.updatedAt ? formatDateTimeSeconds(data.updatedAt, browserTimeZone()) : '尚未保存过'}` }}
           </span>
         </div>
+        <el-alert v-if="connectionTest.error" type="error" :closable="false" show-icon :title="connectionTest.error" class="settings__test-result" />
+        <el-alert v-if="connectionTest.result" type="success" :closable="false" show-icon :title="`连接成功，模型 ${connectionTest.result.modelId} 已响应，耗时 ${(connectionTest.result.durationMs / 1000).toFixed(2)} 秒`" class="settings__test-result" />
 
         <p class="zj-muted settings__note">
           思考强度只影响出题请求的推理开销，「关闭」最快；部分模型/端点不支持该参数，服务端会自动回退。
@@ -282,8 +308,11 @@ async function refreshModels(): Promise<void> {
 
 .settings__actions {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
 }
+.settings__actions .el-button { margin-left: 0; }
+.settings__test-result { margin-top: 16px; }
+.settings__actions .settings__hint { margin: 0; }
+@media(max-width: 600px) { .settings__actions { flex-wrap: wrap; } .settings__actions .settings__hint { flex-basis: 100%; } }
 </style>

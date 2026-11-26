@@ -28,7 +28,7 @@ function updateBlank(index: number, patch: Partial<QuestionContentInput['answerD
 }
 function addBlank() {
   const blanks = props.modelValue.answerDefinition.blanks
-  update({ answerDefinition: { correctOptionIds: [], blanks: [...blanks, { id: `b${blanks.length + 1}`, acceptedAnswers: [''], caseSensitive: true }] } })
+  update({ answerDefinition: { correctOptionIds: [], blanks: [...blanks, { id: `b${blanks.length + 1}`, acceptedAnswers: [''], caseSensitive: false }] } })
 }
 function removeBlank(index: number) {
   update({ answerDefinition: { correctOptionIds: [], blanks: props.modelValue.answerDefinition.blanks.filter((_, position) => position !== index)
@@ -72,10 +72,9 @@ function removeBlank(index: number) {
           <el-button text type="danger" :disabled="modelValue.answerDefinition.blanks.length <= 1" @click="removeBlank(index)">删除此空</el-button></div>
         <el-input :model-value="blank.acceptedAnswers.join('\n')" type="textarea" :rows="2" :aria-label="`第 ${index + 1} 空可接受答案`"
           @update:model-value="updateBlank(index, { acceptedAnswers: $event.split('\n') })" />
-        <el-checkbox :model-value="blank.caseSensitive" @update:model-value="updateBlank(index, { caseSensitive: Boolean($event) })">区分大小写</el-checkbox>
       </div>
       <el-button text type="primary" @click="addBlank">添加空位</el-button>
-      <span class="zj-muted">每个可接受答案最多 {{ MAX_BLANK_ANSWER_CHARS }} 字。</span>
+      <span class="zj-muted">每个可接受答案最多 {{ MAX_BLANK_ANSWER_CHARS }} 字，判分不区分大小写。</span>
     </div>
   </el-form-item>
   <el-form-item label="解析" :error="errors.explanation">

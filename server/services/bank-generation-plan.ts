@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
-import type { BankSourceRef, BankGenerationConflict } from '../../shared/types/question-bank'
-import type { QuestionType } from '../../shared/types/question'
+import type { BankSourceRef, BankGenerationConflict, BankGenerationIssue } from '../../shared/types/question-bank'
+import { QUESTION_TYPES, type QuestionType } from '../../shared/types/question'
 import { MAX_QUOTE_CHARS, MIN_QUOTE_CHARS, MAX_TOTAL_DOCUMENT_CHARS } from '../../shared/constants'
 import type { BankAnalysisSegment } from '../ai/prompt'
 import { stripCodeFence } from '../ai/parser'
@@ -17,17 +17,31 @@ export interface SourceSegment extends BankAnalysisSegment {
   offset: number
 }
 
+/** 资料模式每个来源最多请求 6 道候选题，逐题生成，内容不足时提前结束。 */
+const SOURCE_QUESTION_LIMIT = 6
+
+/** 单个模型请求的处理结果；新请求只生成一道题，已成功的旧批次也不重发。 */
+export interface SourceRequestResult {
+  /** skipped 表示来源已按原语义定论（模型没凑满且不追加），该请求不再发送 */
+  status: 'pending' | 'succeeded' | 'failed' | 'skipped'
+  attempts: number
+  message?: string
+}
+
 export interface GenerationSource {
   id?: string
   title: string
   knowledgePoint: string
   sourceGroup: string
   segments: SourceSegment[]
+  /** 该来源的全部请求都已处理（含失败），不再有待处理请求 */
   completed: boolean
   generatedCount: number
   createdCount: number
   batches?: Array<{ total: number; counts?: Record<QuestionType, number> }>
+  /** 旧任务的连续成功前缀；新任务改用 requests 逐请求记录 */
   completedBatches?: number
+  requests?: SourceRequestResult[]
   shortfallReason?: string
 }
 
@@ -35,6 +49,75 @@ export interface BankGenerationPlan {
   sources: GenerationSource[]
   ignored: Array<{ fileName: string; locators: string[]; reason: string }>
   conflicts?: BankGenerationConflict[]
+}
+
+export function sourceRequestCount(source: GenerationSource): number {
+  return Math.max(1, source.batches?.length ?? 1)
+}
+
+/** 允许“先失败后成功”：旧任务用 completedBatches 连续前缀，新任务逐请求记录，都按此契约读。 */
+function sourceRequestResult(source: GenerationSource, index: number): SourceRequestResult {
+  const prefix = source.completedBatches ?? (source.completed ? sourceRequestCount(source) : 0)
+  return source.requests?.[index] ?? { status: index < prefix ? 'succeeded' : source.completed ? 'skipped' : 'pending', attempts: 0 }
+}
+
+export function sourceOutcomes(source: GenerationSource): SourceRequestResult[] {
+  return Array.from({ length: sourceRequestCount(source) }, (_, index) => sourceRequestResult(source, index))
+}
+
+/** 已定论的请求（成功或按原语义跳过）不再发送模型请求。 */
+export function requestSettled(source: GenerationSource, index: number): boolean {
+  const status = sourceRequestResult(source, index).status
+  return status === 'succeeded' || status === 'skipped'
+}
+
+/** 展开成逐请求状态（落库用）；retrying 时把失败项退回待处理，只重跑失败和未处理的请求。 */
+export function normalizeSourceRequests(source: GenerationSource, retrying: boolean): void {
+  const outcomes = sourceOutcomes(source)
+  const originalBatches: NonNullable<GenerationSource['batches']> = source.batches ?? [{ total: SOURCE_QUESTION_LIMIT }]
+  const batches: NonNullable<GenerationSource['batches']> = []
+  const requests: SourceRequestResult[] = []
+  for (const [index, batch] of originalBatches.entries()) {
+    const previous = outcomes[index]!
+    // 已成功或已停止追加的旧批次保持原样，只拆分尚未完成的题量。
+    if (previous.status === 'succeeded' || previous.status === 'skipped') {
+      batches.push(batch)
+      requests.push(previous)
+      continue
+    }
+    const types = batch.counts
+      ? QUESTION_TYPES.flatMap((type) => Array.from({ length: batch.counts![type] }, () => type))
+      : Array.from({ length: batch.total }, () => null)
+    for (const type of types) {
+      const counts = type === null ? undefined : { single_choice: 0, multiple_choice: 0, true_false: 0, fill_blank: 0 }
+      if (counts && type !== null) counts[type] = 1
+      batches.push({ total: 1, ...(counts ? { counts } : {}) })
+      requests.push(retrying && previous.status === 'failed' ? { status: 'pending', attempts: 0 } : { ...previous })
+    }
+  }
+  source.batches = batches
+  source.requests = requests
+  source.completed = requests.every((result) => result.status !== 'pending')
+}
+
+export function generationProgress(plan: BankGenerationPlan): { done: number; total: number } {
+  let done = 0
+  let total = 0
+  for (const source of plan.sources) {
+    for (const result of sourceOutcomes(source)) {
+      total++
+      // 已处理 = 成功、按原语义跳过、或重试耗尽。失败的请求也算本轮已遍历，进度不会卡在 100% 之前。
+      if (result.status !== 'pending') done++
+    }
+  }
+  return { done, total }
+}
+
+/** 重试耗尽仍失败的请求；成功即从清单消失，页面关闭或服务重启后仍可读。 */
+export function generationIssues(plan: BankGenerationPlan): BankGenerationIssue[] {
+  return plan.sources.flatMap((source) => sourceOutcomes(source).flatMap((result, requestIndex) => result.status === 'failed'
+    ? [{ sourceTitle: source.title, requestIndex: requestIndex + 1, attempts: result.attempts, message: result.message ?? '' }]
+    : []))
 }
 
 /** 分段编号只供模型引用；快照始终保留实际文件和定位，不让模型重写标识。 */

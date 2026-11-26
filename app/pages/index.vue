@@ -8,7 +8,6 @@ import type {
   AttemptStartResult,
   AvailableExamItemDTO,
   AvailableExamsDTO,
-  LoginResultDTO,
   SessionDTO,
 } from '#shared/types'
 
@@ -52,6 +51,16 @@ const availableErrorText = computed(() =>
   availableError.value ? describeApiError(availableError.value, '无法获取考试列表') : '',
 )
 
+// 登录会先更新共享会话并卸载登录卡片，后续加载不能依赖卡片发出的事件。
+watch(session, async (current, previous) => {
+  if (!current?.authenticated) return
+  if (previous?.authenticated && current.name === previous.name && current.role === previous.role) return
+  clearNuxtData()
+  sessionData.value = current
+  startError.value = ''
+  if (current.role === 'candidate') await reloadAvailable()
+})
+
 function phaseText(phase: AvailableExamItem['phase']): string {
   return phase === 'open' ? '开放中' : '未开始'
 }
@@ -72,27 +81,11 @@ function upcomingHint(item: AvailableExamItem): string {
   return `未开始，将于 ${formatDateTime(item.startsAt, item.timeZone)} 开放（${item.timeZone}）`
 }
 
-/** 登录/切换身份后重新取会话与场次列表，避免旧缓存 */
+/** 退出或切换身份时清理旧缓存并重新确认服务端会话。 */
 async function reloadAll(): Promise<void> {
   clearNuxtData()
   await reloadSession()
   session.value = sessionData.value ?? null
-  if (session.value?.role === 'candidate') await reloadAvailable()
-}
-
-async function handleLoggedIn(result: LoginResultDTO): Promise<void> {
-  clearNuxtData()
-  sessionData.value = {
-    authenticated: true,
-    name: result.name,
-    role: result.role,
-    serverNow: result.serverNow,
-  }
-  if (result.role === 'admin') {
-    await navigateTo(result.landing)
-    return
-  }
-  await reloadAvailable()
 }
 
 async function handleLogout(): Promise<void> {
@@ -148,7 +141,7 @@ async function enterExam(item: AvailableExamItem): Promise<void> {
     </el-alert>
 
     <template v-if="!authenticated">
-      <candidate-name-login-card @logged-in="handleLoggedIn" />
+      <candidate-name-login-card />
       <p class="entry__foot zj-muted">
         管理员请使用管理员姓名进入，登录后自动进入管理端。
       </p>
@@ -189,6 +182,9 @@ async function enterExam(item: AvailableExamItem): Promise<void> {
             <div class="entry__identity-actions">
               <NuxtLink to="/my-attempts">
                 <el-button text size="small">我的记录</el-button>
+              </NuxtLink>
+              <NuxtLink to="/my-mistakes">
+                <el-button text size="small">我的错题</el-button>
               </NuxtLink>
               <el-button text size="small" :loading="availablePending" @click="reloadAvailable()">刷新</el-button>
             </div>

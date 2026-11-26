@@ -26,6 +26,8 @@ export interface ModelConfig {
  */
 export interface ChatCompletionRequest extends ModelConfig {
   messages: ChatMessage[]
+  /** 短连接测试可指定更短的截止时间；出题仍沿用原超时。 */
+  signal?: AbortSignal
   /**
    * 增量片段回调：正文 delta.content 与推理 delta.reasoning_content 都会转发，
    * 但返回值只包含正文（推理内容不计入返回值）。
@@ -108,11 +110,13 @@ function mapStatus(status: number): never {
   if (status === 429) {
     throwApi('UPSTREAM_RATE_LIMIT', '模型服务限流，请稍后重试')
   }
-  throwApi('UPSTREAM_ERROR', '模型服务返回异常状态', { status })
+  throwApi('UPSTREAM_ERROR', `模型服务返回异常状态（HTTP ${status}），请检查接口路径、模型 ID 与上游服务`, { status })
 }
 
 async function readJsonBody(response: Response): Promise<unknown> {
-  const text = await response.text()
+  let text: string
+  try { text = await response.text() }
+  catch (error) { upstreamFailure(error) }
   try {
     return JSON.parse(text) as unknown
   } catch {
@@ -122,7 +126,7 @@ async function readJsonBody(response: Response): Promise<unknown> {
 
 /** 从非流式响应体里取助手正文（空内容一律按上游异常处理） */
 function extractContent(body: unknown): string {
-  const choices = (body as { choices?: unknown }).choices
+  const choices = (body as { choices?: unknown } | null)?.choices
   if (!Array.isArray(choices) || choices.length === 0) {
     throw new ApiFailure('UPSTREAM_INVALID_RESPONSE', '模型服务没有返回任何结果')
   }
@@ -287,7 +291,7 @@ export async function requestChatCompletion(config: ChatCompletionRequest): Prom
           Accept: streaming ? 'text/event-stream' : 'application/json',
         },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(MODEL_REQUEST_TIMEOUT_MS),
+        signal: config.signal ?? AbortSignal.timeout(MODEL_REQUEST_TIMEOUT_MS),
       })
     } catch (error) {
       upstreamFailure(error)
@@ -299,7 +303,7 @@ export async function requestChatCompletion(config: ChatCompletionRequest): Prom
     // 上游不认识 reasoning_effort / chat_template_kwargs：去参重试一次并记住
     thinkingUnsupported.add(config.baseUrl)
     console.warn(
-      `[ai] 上游 ${config.baseUrl} 不接受思考参数（reasoning_effort/chat_template_kwargs），已去参数重试，后续请求不再附带`,
+      '[ai] 当前上游不接受思考参数（reasoning_effort/chat_template_kwargs），已去参数重试，后续请求不再附带',
     )
     try {
       await response.body?.cancel()

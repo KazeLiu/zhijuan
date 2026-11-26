@@ -92,6 +92,7 @@ function reload(): void {
         <NuxtLink v-if="exam" :to="`/admin/exams/${exam.id}/results`">
           <el-button type="primary">成绩汇总</el-button>
         </NuxtLink>
+        <NuxtLink v-if="exam" :to="`/admin/exams/${exam.id}/blank-corrections`"><el-button>填空答案纠错</el-button></NuxtLink>
         <el-button :loading="pending" :disabled="bankBusy" @click="reload">刷新</el-button>
       </template>
     </PageHeader>

@@ -6,12 +6,12 @@ export function newQuestionContent(type: QuestionType = 'single_choice'): Questi
     options: type === 'fill_blank' ? [] : type === 'true_false'
       ? TRUE_FALSE_OPTIONS.map((option) => ({ ...option })) : CHOICE_OPTION_IDS.map((id) => ({ id, text: '' })),
     answerDefinition: { correctOptionIds: [], blanks: type === 'fill_blank'
-      ? [{ id: 'b1', acceptedAnswers: [''], caseSensitive: true }] : [] },
+      ? [{ id: 'b1', acceptedAnswers: [''], caseSensitive: false }] : [] },
   }
 }
 
 export function bankFilterQuery(filters: BankFilters) {
   return { knowledgePoint: filters.knowledgePoints?.length ? filters.knowledgePoints : undefined,
     libraryFileId: filters.libraryFileIds?.length ? filters.libraryFileIds : undefined,
-    difficulty: filters.difficulty }
+    difficulty: filters.difficulty, mistakeTopN: filters.mistakeTopN }
 }

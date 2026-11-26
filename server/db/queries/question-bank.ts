@@ -45,16 +45,20 @@ function conditions(filter: BankFilter): { sql: string; params: Array<string | n
 }
 
 function mapRecords(db: DatabaseSync, rows: RawBank[]): BankRecord[] {
-  const result = rows.map((row): BankRecord => ({
-    id: row.id, version: row.version, status: row.status, type: row.type,
-    knowledgePoint: row.knowledge_point, difficulty: row.difficulty, stem: row.stem,
-    options: JSON.parse(row.options_json) as QuestionOption[],
-    answerDefinition: JSON.parse(row.answer_definition_json) as AnswerDefinition,
-    explanation: row.explanation, contentKey: row.content_key,
-    originExamId: row.origin_exam_id, originQuestionId: row.origin_question_id,
-    sourceGroup: row.source_group,
-    createdAt: row.created_at, updatedAt: row.updated_at, sourceRefs: [], sources: [],
-  }))
+  const result = rows.map((row): BankRecord => {
+    const answerDefinition = JSON.parse(row.answer_definition_json) as AnswerDefinition
+    for (const blank of answerDefinition.blanks) blank.caseSensitive = false
+    return {
+      id: row.id, version: row.version, status: row.status, type: row.type,
+      knowledgePoint: row.knowledge_point, difficulty: row.difficulty, stem: row.stem,
+      options: JSON.parse(row.options_json) as QuestionOption[],
+      answerDefinition,
+      explanation: row.explanation, contentKey: row.content_key,
+      originExamId: row.origin_exam_id, originQuestionId: row.origin_question_id,
+      sourceGroup: row.source_group,
+      createdAt: row.created_at, updatedAt: row.updated_at, sourceRefs: [], sources: [],
+    }
+  })
   const byId = new Map(result.map((item) => [item.id, item]))
   for (let offset = 0; offset < result.length; offset += 500) {
     const ids = result.slice(offset, offset + 500).map((item) => item.id)

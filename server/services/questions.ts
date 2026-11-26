@@ -12,7 +12,7 @@ import { findExam, touchExamVersion } from '../db/queries/exams'
 import { findActiveJob } from '../db/queries/jobs'
 import { deleteQuestionsNotIn, findQuestion, insertQuestion, listQuestions, type QuestionRow } from '../db/queries/questions'
 import type { AnswerDefinition, BlankDefinition, QuestionDraftInput, QuestionOption, QuestionType, SourceRef } from '../../shared/types/question'
-import { allocateUnits, findQuestionStructureIssue } from './grading'
+import { allocateUnits, findQuestionStructureIssue, normalizeBlank } from './grading'
 import { validateSourceRefs } from './documents'
 import { ApiFailure, throwApi } from '../utils/respond'
 import { withTransaction } from '../utils/db'
@@ -106,11 +106,17 @@ function normalizeBlanks(raw: unknown, type: QuestionType, stem: string, index: 
         reason: 'acceptedAnswers 不是数组',
       })
     }
-    const acceptedAnswers = acceptedRaw
-      .map((answer) => asText(answer, index, 'answerDefinition.blanks.acceptedAnswers', '可接受答案').normalize('NFC').trim())
-      .filter((answer) => answer !== '')
-    const caseSensitive = blank.caseSensitive === undefined ? true : blank.caseSensitive === true
-    return { id: newId, acceptedAnswers, caseSensitive }
+    const acceptedAnswers: string[] = []
+    const seen = new Set<string>()
+    for (const answer of acceptedRaw) {
+      const text = asText(answer, index, 'answerDefinition.blanks.acceptedAnswers', '可接受答案').normalize('NFC').trim()
+      // 判分不区分大小写，大小写变体互为重复，保留首个即可
+      const key = normalizeBlank(text)
+      if (key === '' || seen.has(key)) continue
+      seen.add(key)
+      acceptedAnswers.push(text)
+    }
+    return { id: newId, acceptedAnswers, caseSensitive: false }
   })
   // 默认按顺序补齐空位编号，同时把题干里的临时占位符统一成 {{bK}}
   for (let blankIndex = 0; blankIndex < blanks.length; blankIndex += 1) {

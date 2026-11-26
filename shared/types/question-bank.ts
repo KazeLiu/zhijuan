@@ -65,6 +65,8 @@ export interface BankFilters {
   knowledgePoints?: string[]
   libraryFileIds?: string[]
   difficulty?: Difficulty
+  /** 限定为当前筛选范围内、按错误率排名的前 N 道易错题；省略时使用普通题库。 */
+  mistakeTopN?: number
 }
 
 export interface BankListQuery extends BankFilters {
@@ -124,11 +126,21 @@ export interface BankGenerationConflict {
   generatedAnswer: AnswerDefinition
 }
 
+/** 未解决问题：请求错误带序号与次数，任务级错误使用 null 并在 message 中说明阶段。 */
+export interface BankGenerationIssue {
+  sourceTitle: string
+  /** 来源内的第几个请求（1 基）；任务级错误为 null。 */
+  requestIndex: number | null
+  attempts: number | null
+  message: string
+}
+
 export interface BankGenerationJobDTO {
   id: string
   status: 'queued' | 'running' | 'succeeded' | 'failed'
   input: BankGenerationRequest
   stage: 'analysis' | 'generation'
+  /** 已处理（成功 + 失败）的请求数 */
   progressDone: number
   progressTotal: number
   generatedCount: number
@@ -142,13 +154,17 @@ export interface BankGenerationJobDTO {
     knowledgePoint: string
     fileName: string
     locators: string[]
+    /** 该来源的请求全部处理完（含失败），不再有待处理请求 */
     completed: boolean
+    failedCount: number
     generatedCount: number
     createdCount: number
     requestedCount: number | null
     shortfallReason: string
   }>
   ignored: Array<{ fileName: string; locators: string[]; reason: string }>
+  /** 重试耗尽仍失败的请求，成功后移除；任务可 failed 但仍有部分成功结果 */
+  issues: BankGenerationIssue[]
   errorMessage: string
   createdAt: EpochMs
 }

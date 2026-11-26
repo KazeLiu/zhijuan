@@ -1,0 +1,21 @@
+# 构建上下文只允许源码，私有数据、环境文件和本机依赖不发给构建器。
+**
+!package.json
+!pnpm-lock.yaml
+!nuxt.config.ts
+!tsconfig.json
+!app/
+!app/**
+!server/
+!server/**
+!shared/
+!shared/**
+
+**/.env
+**/.env.*
+**/*.sqlite
+**/*.sqlite-*
+**/node_modules
+**/data
+**/uploads
+**/logs

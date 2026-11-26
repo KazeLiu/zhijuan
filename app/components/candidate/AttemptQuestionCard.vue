@@ -102,7 +102,7 @@ function updateBlank(blankId: string, next: string): void {
         />
       </div>
       <p class="q-card__hint zj-muted">
-        每空最多 {{ MAX_BLANK_ANSWER_CHARS }} 字{{ question.caseSensitive ? '，区分大小写' : '，不区分大小写' }}。
+        每空最多 {{ MAX_BLANK_ANSWER_CHARS }} 字，不区分大小写。
       </p>
     </div>
 

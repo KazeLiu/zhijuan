@@ -27,7 +27,7 @@ export interface BlankDefinition {
   id: string
   /** 可接受答案，至少一项，已 NFC 规范化 */
   acceptedAnswers: string[]
-  /** 是否区分大小写，默认 true */
+  /** legacy 字段：判分统一不区分大小写，该值恒为 false，仅供旧数据读取兼容 */
   caseSensitive: boolean
 }
 
@@ -96,7 +96,7 @@ export interface CandidateQuestion {
   options: QuestionOption[]
   /** 填空题空位；其他题型为空数组 */
   blanks: CandidateBlank[]
-  /** 仅填空：是否区分大小写，需在界面提示 */
+  /** 仅填空：legacy 字段，判分统一不区分大小写，恒为 false */
   caseSensitive: boolean
 }
 

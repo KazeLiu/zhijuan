@@ -4,7 +4,7 @@
  * - 立即展示总分、用时、是否及格、本人答案
  * - canReveal=true 才展示逐题标准答案与解析；否则显示公开时刻并在到时自动重新请求
  */
-import type { AttemptDetailDTO, AttemptResultDTO, CandidateQuestion } from '#shared/types'
+import type { AttemptDetailDTO, AttemptResultDTO, CandidateQuestion, QuestionResultDTO } from '#shared/types'
 import { PASS_SCORE_UNITS } from '#shared/constants'
 
 useHead({ title: '知卷 · 成绩' })
@@ -126,6 +126,19 @@ function scoreTagType(): 'success' | 'danger' {
   return result.value?.passed ? 'success' : 'danger'
 }
 
+/** 逐题底色与标签：按最终分（人工复核优先）判断，部分得分也按错处理 */
+function questionVerdict(question: QuestionResultDTO): { tone: 'correct' | 'wrong'; label: string } {
+  if (question.maxScoreUnits > 0 && question.earnedScoreUnits >= question.maxScoreUnits) {
+    return { tone: 'correct', label: '答对' }
+  }
+  if (question.unanswered) return { tone: 'wrong', label: '未作答' }
+  return { tone: 'wrong', label: question.earnedScoreUnits > 0 ? '部分得分' : '答错' }
+}
+
+const onlyWrong = ref(true)
+const wrongQuestions = computed(() => (result.value?.questions ?? []).filter((question) => questionVerdict(question).tone === 'wrong'))
+const visibleQuestions = computed(() => onlyWrong.value ? wrongQuestions.value : result.value?.questions ?? [])
+
 onMounted(async () => {
   await load()
   document.addEventListener('visibilitychange', handleVisibility)
@@ -141,6 +154,7 @@ onBeforeUnmount(() => {
   <section class="result">
     <PageHeader title="考试成绩" description="交卷后立即判分；答案与解析按本场公开策略展示。" back-to="/my-attempts" back-text="我的记录">
       <template #actions>
+        <NuxtLink to="/my-mistakes"><el-button>我的错题</el-button></NuxtLink>
         <el-button :loading="refreshing" @click="load({ silent: true })">刷新</el-button>
         <NuxtLink to="/">
           <el-button>返回入口</el-button>
@@ -221,15 +235,27 @@ onBeforeUnmount(() => {
         <template #header>
           <div class="result__card-head">
             <span>逐题详情</span>
-            <span class="zj-muted result__card-hint">共 {{ result.questions.length }} 题</span>
+            <div class="result__question-controls">
+              <el-checkbox v-model="onlyWrong">只看错题</el-checkbox>
+              <span class="zj-muted result__card-hint">显示 {{ visibleQuestions.length }} / 共 {{ result.questions.length }} 题</span>
+            </div>
           </div>
         </template>
 
-        <article v-for="question in result.questions" :key="question.id" class="rq">
+        <el-empty v-if="!visibleQuestions.length" :description="onlyWrong ? '本场没有错题' : '本场暂无题目'" />
+        <article
+          v-for="question in visibleQuestions"
+          :key="question.id"
+          class="rq"
+          :class="`rq--${questionVerdict(question).tone}`"
+        >
           <header class="rq__head">
             <span class="rq__position">第 {{ question.position }} 题</span>
             <el-tag size="small" effect="plain">{{ QUESTION_TYPE_LABELS[question.type] }}</el-tag>
             <el-tag v-if="question.manualReviewed" size="small" type="warning" effect="plain">人工复核</el-tag>
+            <el-tag :type="questionVerdict(question).tone === 'correct' ? 'success' : 'danger'" size="small">
+              {{ questionVerdict(question).label }}
+            </el-tag>
             <span class="rq__score zj-tabular">
               {{ formatScoreUnits(question.earnedScoreUnits) }} / {{ formatScoreUnits(question.maxScoreUnits) }} 分
             </span>
@@ -385,6 +411,16 @@ onBeforeUnmount(() => {
   font-weight: 400;
 }
 
+.result__question-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.result__question-controls .el-checkbox {
+  margin-right: 0;
+}
+
 .result__hint {
   margin: 0;
   font-size: 15px;
@@ -399,17 +435,23 @@ onBeforeUnmount(() => {
 }
 
 .rq {
-  padding: 16px 0;
-  border-bottom: 1px solid var(--zj-border);
+  padding: 14px 16px;
+  border-radius: var(--zj-radius);
+  border-left: 3px solid transparent;
 }
 
-.rq:last-child {
-  border-bottom: none;
-  padding-bottom: 0;
+.rq + .rq {
+  margin-top: 10px;
 }
 
-.rq:first-of-type {
-  padding-top: 0;
+.rq--correct {
+  background: var(--zj-primary-weak);
+  border-left-color: var(--zj-primary);
+}
+
+.rq--wrong {
+  background: var(--zj-danger-weak);
+  border-left-color: var(--zj-danger);
 }
 
 .rq__head {

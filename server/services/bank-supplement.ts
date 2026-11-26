@@ -2,7 +2,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import type { Difficulty, QuestionType } from '../../shared/types/question'
 import { QUESTION_TYPES } from '../../shared/types/question'
 import type { BankGenerationSourceSummary, BankSupplementRequest, BankSupplementQuantity } from '../../shared/types/question-bank'
-import { MAX_BATCH_QUESTIONS, MAX_QUESTIONS } from '../../shared/constants'
+import { MAX_QUESTIONS } from '../../shared/constants'
 import { listGenerationSources } from '../db/queries/bank-generation-sources'
 import { listBankRecords, type BankRecord } from '../db/queries/question-bank'
 import { generationSourceRefs, resolveGenerationSourceGroup, type GenerationSource, type BankGenerationPlan } from './bank-generation-plan'
@@ -67,16 +67,12 @@ export function prepareBankSupplement(db: DatabaseSync, body: Record<string, unk
     source.batches = []
     return source
   })).sort((a, b) => (counts.get(sourceKey(a)) ?? 0) - (counts.get(sourceKey(b)) ?? 0))
-  // 题量属于本次范围的总数，轮流分给所选来源；每次请求仍不超过六道。
+  // 题量属于本次范围的总数，轮流分给所选来源；每次请求只生成一道题。
   slots.forEach((type, index) => {
     const source = sources[index % sources.length]!
-    let batch = source.batches![source.batches!.length - 1]
-    if (!batch || batch.total === MAX_BATCH_QUESTIONS) {
-      batch = { total: 0, ...(mode === 'by_type' ? { counts: { single_choice: 0, multiple_choice: 0, true_false: 0, fill_blank: 0 } } : {}) }
-      source.batches!.push(batch)
-    }
-    batch.total++
-    if (type !== null) batch.counts![type]++
+    const counts = type === null ? undefined : { single_choice: 0, multiple_choice: 0, true_false: 0, fill_blank: 0 }
+    if (counts && type !== null) counts[type] = 1
+    source.batches!.push({ total: 1, ...(counts ? { counts } : {}) })
   })
   return { input: { mode: 'supplement', sourceIds: ids as string[], difficulty, extraPrompt, quantity },
     plan: { sources: sources.filter((source) => source.batches!.length), ignored: [], conflicts: [] } }

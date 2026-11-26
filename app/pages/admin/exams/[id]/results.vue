@@ -4,7 +4,7 @@
  * 指标卡 + 考生表（每页 20）+ 逐题表现表 + 筛选 + Excel 导出（跟随筛选）。
  */
 import type { CandidateResultRowDTO, ResultsPageDTO, ResultsQuery } from '#shared/types'
-import { DEFAULT_PAGE_SIZE } from '#shared/constants'
+import { DEFAULT_PAGE_SIZE, PASS_SCORE_UNITS } from '#shared/constants'
 import { QUESTION_TYPE_LABELS } from '#shared/types'
 
 definePageMeta({ layout: 'admin' })
@@ -118,6 +118,7 @@ const query = computed<ResultsQuery>(() => ({
       back-text="返回场次详情"
     >
       <template #actions>
+        <NuxtLink v-if="exam" :to="`/admin/exams/${examId}/blank-corrections`"><el-button>填空答案纠错</el-button></NuxtLink>
         <el-button type="primary" :loading="exporting" :disabled="!exam" @click="exportExcel">导出 Excel</el-button>
         <el-button :loading="pending" @click="refresh()">刷新</el-button>
       </template>
@@ -172,7 +173,7 @@ const query = computed<ResultsQuery>(() => ({
         <el-card shadow="never" class="results__stat">
           <p class="results__stat-label zj-muted">及格率</p>
           <p class="results__stat-value zj-tabular">{{ rateText(summary.passRate) }}</p>
-          <p class="zj-muted results__stat-hint">≥ 60.00 分视为及格</p>
+          <p class="zj-muted results__stat-hint">≥ {{ formatScoreUnits(PASS_SCORE_UNITS) }} 分视为及格</p>
         </el-card>
       </div>
 

@@ -65,6 +65,21 @@ const answeredCount = computed(() => {
 
 const isSubmitted = computed(() => attempt.value?.status === 'submitted')
 
+/** 逐题底色与标签：已交卷才按最终分判断；未交卷不判分，保持中性 */
+function questionVerdict(question: QuestionAdminDTO): { tone: 'correct' | 'wrong' | 'neutral'; label: string } {
+  if (!isSubmitted.value) return { tone: 'neutral', label: '' }
+  const finalScoreUnits = gradeMap.value.get(question.id)?.finalScoreUnits ?? 0
+  if (question.maxScoreUnits > 0 && finalScoreUnits >= question.maxScoreUnits) {
+    return { tone: 'correct', label: '答对' }
+  }
+  if (isAnswerEmpty(attempt.value?.answers[question.id] ?? null)) return { tone: 'wrong', label: '未作答' }
+  return { tone: 'wrong', label: finalScoreUnits > 0 ? '部分得分' : '答错' }
+}
+
+const onlyWrong = ref(true)
+const visibleQuestions = computed(() => onlyWrong.value && isSubmitted.value
+  ? questions.value.filter((question) => questionVerdict(question).tone === 'wrong') : questions.value)
+
 /* ---------------- 改分弹窗 ---------------- */
 
 const gradeDialogVisible = ref(false)
@@ -255,7 +270,10 @@ async function submitGrade() {
         <template #header>
           <div class="zj-attempt-admin__card-header">
             <span>逐题作答与改分</span>
-            <span class="zj-muted">每题自动分由系统判定，人工改分以最终分为准</span>
+            <div class="zj-attempt-admin__question-controls">
+              <el-checkbox v-model="onlyWrong" :disabled="!isSubmitted">只看错题</el-checkbox>
+              <span class="zj-muted">显示 {{ visibleQuestions.length }} / 共 {{ questions.length }} 题</span>
+            </div>
           </div>
         </template>
 
@@ -266,14 +284,27 @@ async function submitGrade() {
           description="场次题目可能已被清空，无法改分。"
         />
 
+        <el-empty v-else-if="!visibleQuestions.length" description="本场没有错题" />
         <div v-else class="zj-attempt-admin__questions">
-          <article v-for="question in questions" :key="question.id" class="zj-attempt-admin__question">
+          <article
+            v-for="question in visibleQuestions"
+            :key="question.id"
+            class="zj-attempt-admin__question"
+            :class="`zj-attempt-admin__question--${questionVerdict(question).tone}`"
+          >
             <header class="zj-attempt-admin__question-head">
               <div class="zj-attempt-admin__question-meta">
                 <span class="zj-attempt-admin__position">第 {{ question.position }} 题</span>
                 <el-tag size="small" type="info">{{ QUESTION_TYPE_LABELS[question.type] }}</el-tag>
                 <span class="zj-muted">满分 <span class="zj-tabular">{{ formatScoreUnits(question.maxScoreUnits) }}</span></span>
                 <el-tag v-if="gradeMap.get(question.id)?.manualReviewed" size="small" type="warning">已人工复核</el-tag>
+                <el-tag
+                  v-if="questionVerdict(question).label"
+                  size="small"
+                  :type="questionVerdict(question).tone === 'correct' ? 'success' : 'danger'"
+                >
+                  {{ questionVerdict(question).label }}
+                </el-tag>
               </div>
               <el-button
                 size="small"
@@ -432,11 +463,31 @@ async function submitGrade() {
   gap: 16px;
 }
 
+.zj-attempt-admin__question-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.zj-attempt-admin__question-controls .el-checkbox {
+  margin-right: 0;
+}
+
 .zj-attempt-admin__question {
   border: 1px solid var(--zj-border);
   border-radius: var(--zj-radius);
   padding: 16px;
   background: #fff;
+}
+
+.zj-attempt-admin__question--correct {
+  background: var(--zj-primary-weak);
+  border-color: var(--zj-primary);
+}
+
+.zj-attempt-admin__question--wrong {
+  background: var(--zj-danger-weak);
+  border-color: var(--zj-danger);
 }
 
 .zj-attempt-admin__question-head {

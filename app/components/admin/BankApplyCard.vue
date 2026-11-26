@@ -64,6 +64,7 @@ function openPicker() { error.value = ''; conflictItemId.value = ''; manualVersi
   <section class="bank-apply">
     <h3>从题库组卷</h3>
     <AdminBankFilters v-model="filters" :knowledge-points="catalog?.knowledgePoints ?? []" :files="catalog?.files ?? []" />
+    <AdminBankMistakeRange v-model="filters.mistakeTopN" :disabled="locked || busy" />
     <el-alert v-if="catalogError" type="error" :closable="false" title="筛选选项加载失败"><el-button @click="reloadCatalog()">重试</el-button></el-alert>
     <el-table :data="rows" size="small">
       <el-table-column prop="label" label="题型" />
@@ -79,7 +80,7 @@ function openPicker() { error.value = ''; conflictItemId.value = ''; manualVersi
       <el-button :disabled="blocked" @click="openPicker">手动挑题 · 追加</el-button>
       <NuxtLink to="/admin/question-bank"><el-button text>管理题库</el-button></NuxtLink>
     </div>
-    <p v-if="counts && shortage" class="zj-muted">同源题每卷最多选一道；独立考点不足，可调整范围或题数，或去题库用 AI 补题。</p>
+    <p v-if="counts && shortage" class="zj-muted">{{ filters.mistakeTopN === undefined ? '同源题每卷最多选一道；独立考点不足，可调整范围或题数，或去题库用 AI 补题。' : '错题范围不足以满足题型数量；可扩大排名范围、调整题数或关闭错题集选项。' }}</p>
     <AdminBankPickerDialog v-model="pickerOpen" :exam="exam" :initial-filters="filters" :busy="busy" :blocked="blocked" :error="error" :conflict-item-id="conflictItemId"
       @clear-error="error = ''; conflictItemId = ''" @confirm="apply({ mode: 'manual', expectedVersion: manualVersion, items: $event })" />
   </section>

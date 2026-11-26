@@ -78,7 +78,7 @@ function toDraft(question: QuestionAdminDTO): DraftQuestion {
       blanks: question.answerDefinition.blanks.map((blank) => ({
         id: blank.id,
         acceptedAnswers: [...blank.acceptedAnswers],
-        caseSensitive: blank.caseSensitive,
+        caseSensitive: false,
       })),
     },
     explanation: question.explanation,
@@ -171,7 +171,7 @@ function openEdit(index: number): void {
     blanks: target.answerDefinition.blanks.map((blank) => ({
       id: blank.id,
       acceptedAnswers: [...blank.acceptedAnswers],
-      caseSensitive: blank.caseSensitive,
+      caseSensitive: false,
     })),
   }
   form.explanation = target.explanation
@@ -251,7 +251,7 @@ function applyForm(): void {
               acceptedAnswers: Array.from(
                 new Set(blank.acceptedAnswers.map((item) => item.trim()).filter(Boolean)),
               ),
-              caseSensitive: blank.caseSensitive,
+              caseSensitive: false,
             }))
           : [],
     },

@@ -171,7 +171,7 @@ function reset(): void {
           :maxlength="MAX_INSTRUCTIONS_CHARS"
           show-word-limit
           :disabled="locked"
-          placeholder="例如：本场为闭卷考试，共 20 题，满分 100 分，60 分及格。"
+          placeholder="例如：本场为闭卷考试，共 20 题，满分 100 分，90 分及格。"
         />
       </el-form-item>
 

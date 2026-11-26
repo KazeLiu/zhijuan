@@ -25,7 +25,7 @@ export function useAuthSession() {
     }
   }
 
-  /** 姓名即身份：成功即写入会话缓存 */
+  /** 姓名即身份：成功即写入会话缓存，管理员按服务端 landing 跳转。 */
   async function login(name: string): Promise<LoginResultDTO> {
     const payload: LoginRequest = { name }
     const result = await apiFetch<LoginResultDTO>('/api/auth/login', {
@@ -39,6 +39,7 @@ export function useAuthSession() {
       role: result.role,
       serverNow: result.serverNow,
     }
+    if (result.role === 'admin') await navigateTo(result.landing)
     return result
   }
 

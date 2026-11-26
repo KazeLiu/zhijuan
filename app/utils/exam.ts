@@ -90,7 +90,7 @@ export function computeExamPhase(
   return 'open'
 }
 
-/** 是否及格（6000 单位 = 60.00 分） */
+/** 是否及格（9000 单位 = 90.00 分） */
 export function isPassed(totalScoreUnits: number | null | undefined): boolean {
   if (totalScoreUnits === null || totalScoreUnits === undefined) return false
   return totalScoreUnits >= PASS_SCORE_UNITS

@@ -61,7 +61,7 @@ function isCorrectOption(optionId: string): boolean {
         <span>
           第 {{ index + 1 }} 空：{{ blank.acceptedAnswers.length > 0 ? blank.acceptedAnswers.join(' / ') : '未设置答案' }}
         </span>
-        <span class="zj-muted">（{{ blank.caseSensitive ? '区分大小写' : '不区分大小写' }}）</span>
+        <span class="zj-muted">（不区分大小写）</span>
       </li>
     </ul>
 

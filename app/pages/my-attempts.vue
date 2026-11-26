@@ -41,6 +41,7 @@ function handlePageChange(next: number): void {
       back-text="返回入口"
     >
       <template #actions>
+        <NuxtLink to="/my-mistakes"><el-button>我的错题</el-button></NuxtLink>
         <el-button :loading="pending" @click="refresh()">刷新</el-button>
       </template>
     </PageHeader>

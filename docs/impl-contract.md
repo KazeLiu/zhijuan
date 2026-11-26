@@ -350,7 +350,7 @@ normalizeName(raw):
 
 ### 7.1 计分单位
 
-- 1 单位 = 0.01 分，整卷 `10000`（`SCORE_TOTAL_UNITS`），及格 `6000`（`PASS_SCORE_UNITS`）。
+- 1 单位 = 0.01 分，整卷 `10000`（`SCORE_TOTAL_UNITS`），及格 `9000`（`PASS_SCORE_UNITS`）。
 - 库内一切分值列都是整数单位；**禁止**用浮点存分。
 - 展示：`(units / 100).toFixed(2)`；导出 Excel 时写**数值**（`units / 100`）并设两位小数格式。
 
@@ -373,11 +373,10 @@ export function allocateUnits(totalUnits: number, count: number): number[] {
 
 ### 7.3 判分算法
 
-设 `normalizeBlank(input, caseSensitive)`：
+设 `normalizeBlank(input)`，作答与可接受答案均使用同一规则：
 
 ```ts
-const base = input.normalize('NFC').trim().replace(/\s+/gu, ' ')
-return caseSensitive ? base : base.toLowerCase()
+return input.normalize('NFC').trim().replace(/\s+/gu, ' ').toLowerCase()
 ```
 
 逐题：
@@ -400,7 +399,7 @@ return caseSensitive ? base : base.toLowerCase()
 | `single_choice` | `options` 恰 4 项，ID 固定 `A,B,C,D`，文本非空且 ≤500；`correctOptionIds` 恰 1 项且在选项中；`blanks` 为空 |
 | `multiple_choice` | 同上 4 项；`correctOptionIds` 长度 2..3（≥2 且 ≠4）；`blanks` 为空 |
 | `true_false` | `options` 固定 `[{id:'true',text:'正确'},{id:'false',text:'错误'}]`；`correctOptionIds` 恰 1 项（`true` 或 `false`）；`blanks` 为空 |
-| `fill_blank` | `options` 为空；`blanks` 至少 1 个；`blanks[].id` 稳定唯一（`b1`,`b2`,…）；每个 `acceptedAnswers` 非空且去重、每项 ≤20 字符；`caseSensitive` 缺省 `true` |
+| `fill_blank` | `options` 为空；`blanks` 至少 1 个；`blanks[].id` 稳定唯一（`b1`,`b2`,…）；每个 `acceptedAnswers` 非空、保存时按统一规则去重、每项 ≤20 字符；`caseSensitive` 为兼容字段，写入与对外读取固定 `false`，旧值不参与评分 |
 
 通用：`stem` 非空 ≤2000；`explanation` 非空 ≤2000；`sourceRefs` 至少 1 条，且 `documentId` 属于本场次、定位存在、`quote` 归一化后 ≥10 且命中该定位段落（§11.4）。题干对填空的可选占位符写作 `{{b1}}`，若出现则与实际空位一一对应。
 
@@ -721,6 +720,7 @@ function examPhase(exam: { status: 'draft' | 'published'; startsAt: number; ends
 | --- | --- | --- | --- | --- |
 | `app/pages/index.vue` | `/` | `default` | `GET /api/auth/session` → 未登录显示姓名登录卡片；考生登录成功后主动获取 `GET /api/exams/current` | 管理员进入管理端；考生查看考试信息，自行点击开始、续答或查看成绩；请求完成前显示加载状态，无考试时显示下一场时间与「我的记录」入口 |
 | `app/pages/my-attempts.vue` | `/my-attempts` | `default` | `GET /api/me/attempts?page` | 每页 20，行点击 → 已交卷进结果页、进行中进作答页 |
+| `app/pages/my-mistakes.vue` | `/my-mistakes` | `default` | `GET /api/me/mistakes?page&query&type` | 仅本人已交卷且已公开答案的未满分题目，每页 20；查看答案、解析及来源成绩 |
 | `app/pages/exams/[examId]/attempt.vue` | `/exams/:examId/attempt` | `default` | `GET /api/attempts/:id`（id 由 `POST /api/attempts/start` 得到） | 逐题作答、自动保存、正计时、交卷确认（§10） |
 | `app/pages/attempts/[attemptId]/result.vue` | `/attempts/:attemptId/result` | `default` | `GET /api/attempts/:id/result` | 立即展示总分/用时/本人答案；`canReveal` 决定是否展示逐题解析；`after_exam` 显示公开时刻并在到时自动刷新 |
 | 登录卡片组件 | 由 `index.vue` 内联或 `components/candidate/NameLoginCard.vue` | — | — | 姓名输入框 + 提交；错误时展示 `error.message` |
@@ -753,7 +753,7 @@ function examPhase(exam: { status: 'draft' | 'published'; startsAt: number; ends
 
 - 单题主视图 + 右侧/底部题号面板：当前/已答/未答三态；窄屏题号面板收进抽屉。
 - 选项单击**只选中不跳题**；切题用上一题/下一题按钮或题号；最后一题显示「交卷」。
-- 填空题每空下方标注该空分值；多选提示「可多选」；填空提示「每空最多 20 字」与「区分大小写」。
+- 填空题每空下方标注该空分值；多选提示「可多选」；填空提示「每空最多 20 字」与「不区分大小写」，编辑器不提供大小写开关。
 - 填空题对外显示的题干将 `{{b1}}` 等内部标识渲染为 `_____`，作答、结果和管理端预览保持一致；保存的题干、编辑字段及答案空位 ID 保持原格式，以便绑定和判分。判断题按钮以绿色勾、红色叉分别表示正确与错误，不把 `true` / `false` 作为图标文本。
 - 交卷确认弹窗显示已答 X 题 / 未答 Y 题；允许空题交卷。
 
@@ -773,9 +773,14 @@ function examPhase(exam: { status: 'draft' | 'published'; startsAt: number; ends
 ### 10.4 结果页（design §7.2）
 
 - `canReveal=false`：展示总分（两位小数）、用时、是否及格、本人答案；逐题区域显示「答案与解析将在 {revealAt 按考试时区格式化}（{timeZone}）公开」，并在 `revealAt` 到时自动重新请求（同时监听 `visibilitychange`）。
-- `canReveal=true`：逐题展示题干、本人答案、正确答案、解析、得分（含"人工复核"标记）；未作答显示「未作答」。
+- `canReveal=true`：逐题展示题干、本人答案、正确答案、解析、得分（含"人工复核"标记）；未作答显示「未作答」。按最终分（人工复核优先）显示底色：满分淡绿，零分或部分得分淡红，并标记「答对 / 部分得分 / 答错 / 未作答」。
+- 提供「只看错题」复选框，默认勾选，取消后显示全部题目；按最终分是否未满分筛选，保留原题号。无错题时明确显示「本场没有错题」。公开前不展示筛选或错题数量。管理员已交卷答卷详情也默认只看错题。
 - 不出现「待批阅」等不存在状态。
 - 延迟公开的等待使用响应中的 `serverNow` 校准，重新请求间隔至少 1 秒，不能因客户端时钟偏快形成无间隔请求。
+
+个人错题接口 `GET /api/me/mistakes` 使用 `requireSession` 得到的规范化姓名，忽略客户端提供的姓名或答卷身份。支持 `page`、题干 `query`、题型 `type` 筛选，返回分页记录。服务端先限定本人已交卷记录、`COALESCE(override_score_units, auto_score_units, 0) < max_score_units` 及答案公开条件，再计数和分页；`after_exam` 使用 `MIN(ends_at, COALESCE(ended_at, ends_at))` 判定公开时刻。未作答也纳入个人错题，复核成满分后自然移除，不改变团队错题统计口径。
+
+入口页在共享会话切换到已登录姓名后清理旧身份缓存、同步入口会话并主动加载场次，不依赖随后可能已卸载的登录卡片事件。管理员登录直接使用登录响应的 `landing` 跳转。
 
 ### 10.5 管理端
 
@@ -963,3 +968,5 @@ function examPhase(exam: { status: 'draft' | 'published'; startsAt: number; ends
 | 2026-10-23 | 用户 | **出题任务可靠性修复（排查「卡在 0/4 批」后）**：① `MODEL_REQUEST_TIMEOUT_MS` 120s→300s、`MAX_BATCH_QUESTIONS` 20→6（27B 本地模型单批大会撞超时）；② 单批最多重试 2 次（仅超时/格式漂移/引用校验类错误），引用摘录先按原文回退修复再校验；③ 任务时间戳改为写入时刻取 `Date.now()`，修掉 `finished_at === started_at`；④ `ExamAdminDTO` 新增 `latestJob`，任务失败/中断后界面不再"消失"，且失败时展示错误码与原因 | `shared/constants.ts`、`shared/types/exam.ts`、`server/services/{generation,exams,documents}.ts`、`server/tasks/generation-worker.ts`、`app/components/admin/BlueprintCard.vue` |
 | 2026-10-23 | 用户 | **新增资料库（v1.1 增补，见 `docs/library-feature.md` §L1–§L7）**：migration 002 新增 `library_files`/`library_segments` 与 `documents.library_file_id`；新增 5 个接口（列表/上传/预览/删除/从资料库挂载）；`DocumentDTO` 追加 `libraryFileId`；新错误码 `LIBRARY_FILE_IN_USE`、`DOCUMENT_ALREADY_ADDED`；新常量 `MAX_LIBRARY_FILES=100`；场次上传的资料同时入库（单物理文件由资料库持有） | `server/db/**`、`server/services/{documents,library}.ts`、`server/api/admin/library/**`、`server/api/admin/exams/[id]/documents/**`、`shared/types/{library,exam,common}.ts`、`shared/constants.ts`、`app/pages/admin/library.vue`、`app/components/admin/{DocumentsCard,LibraryPickerDialog}.vue`、`app/layouts/admin.vue` |
 | 2026-10-26 | 用户 | **出题任务实时输出 + 模型思考强度**：① 新增 `GET /api/admin/jobs/:id/output?offset=N` → `JobOutputDTO`（增量文本，单次 ≤20000 字符，越界回落，`truncated` 表被截断前缀）；② 出题请求走 SSE（`stream:true`），`delta.reasoning`/`delta.reasoning_content` 与 `delta.content` 按到达顺序落 `jobs.output_text`（只留最近 60000 字符，`output_chars` 记累计），400ms/2000 字符节流，`finally` 必 flush；③ `provider_settings.thinking_level` ∈ `off\|low\|medium\|high`（默认 `off`），`high` 映射上游 `xhigh`，上游 400 时去参重试一次并记忆；④ 场次页出题任务下方新增固定最大高度实时输出框（800ms 轮询、可暂停自动滚动、可复制）。详见 §11.8 | migration 003、`server/ai/client.ts`、`server/db/queries/{jobs,settings}.ts`、`server/services/{job-output,generation,settings}.ts`、`server/api/admin/jobs/[id]/output.get.ts`、`shared/{constants,types/admin,types/exam}.ts`、`app/components/admin/{JobOutputPanel,BlueprintCard}.vue`、`app/pages/admin/settings.vue` |
+| 2026-11-26 | 用户 | **及格线 60 分 → 90 分**：`PASS_SCORE_UNITS` 6000 → 9000（1 单位 = 0.01 分，`>=` 为及格），同步修正及格筛选 SQL 里硬编码的 6000、汇总页「≥ 60.00 分视为及格」提示与 §7.1 计分单位口径；仅改及格判断，不改写已有分数与答卷数据，不涉及表结构变更。用户端结果页逐题详情改按最终分（人工复核优先）显示淡绿/淡红底色与答对/部分得分/答错标签，未公开阶段保持中性；管理端答卷详情逐题块同样口径（未交卷中性） | `shared/constants.ts`、`server/db/queries/results.ts`、`app/utils/exam.ts`、`app/pages/admin/exams/[id]/results.vue`、`app/pages/attempts/[attemptId]/result.vue`、`app/pages/admin/attempts/[id].vue`、`app/components/admin/BasicsCard.vue`、`app/assets/styles/main.css`、`docs/design.md`、`docs/impl-contract.md` |
+| 2026-11-26 | 用户 | 题库增加每页 20、50、100、200、500 条选择，默认仍为 20；新增 `MAX_BANK_PAGE_SIZE=500`，列表及单次批量删除上限同步为 500，保留逐题版本校验和整批事务 | 题库管理页、题库列表与批量删除接口；单场题数和其他列表分页规则不变 |

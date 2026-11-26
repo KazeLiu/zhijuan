@@ -67,7 +67,7 @@ function parseAnswerDefinition(raw: string): AnswerDefinition {
               acceptedAnswers: Array.isArray(blank.acceptedAnswers)
                 ? blank.acceptedAnswers.filter((item): item is string => typeof item === 'string')
                 : [],
-              caseSensitive: blank.caseSensitive !== false,
+              caseSensitive: false,
             }))
         : [],
     }
@@ -222,7 +222,8 @@ export function toCandidateQuestionDTO(row: QuestionRow): CandidateQuestion {
     multiple: row.type === 'multiple_choice',
     options: row.options,
     blanks: blanks.map((blank, index) => ({ id: blank.id, maxScoreUnits: blankUnits[index] ?? 0 })),
-    caseSensitive: row.type === 'fill_blank' ? (blanks[0]?.caseSensitive ?? true) : false,
+    // 判分统一不区分大小写，考生侧恒为 false
+    caseSensitive: false,
   }
 }
 

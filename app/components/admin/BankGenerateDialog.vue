@@ -3,7 +3,7 @@ import type { AnswerDefinition, QuestionType, BankGenerationJobDTO, BankGenerati
 import { DIFFICULTY_LABELS, QUESTION_TYPES, QUESTION_TYPE_LABELS } from '#shared/types'
 import { MAX_EXTRA_PROMPT_CHARS } from '#shared/constants'
 const open = defineModel<boolean>({ required: true })
-const props = defineProps<{ job: BankGenerationJobDTO | null }>()
+const props = defineProps<{ job: BankGenerationJobDTO | null; issuesOnly?: boolean }>()
 const emit = defineEmits<{ created: [job: BankGenerationJobDTO] }>()
 const { data: catalog, error: catalogError, refresh } = await useBankCatalog()
 const form = reactive<BankFileGenerationRequest>({ libraryFileIds: [], difficulty: 'normal', extraPrompt: '' })
@@ -96,8 +96,8 @@ async function generate(resume = false) {
 </script>
 
 <template>
-  <el-dialog v-model="open" title="AI 生成题库题目" width="min(720px, 94vw)" :close-on-click-modal="false">
-    <el-form label-position="top" :disabled="busy || active">
+  <el-dialog v-model="open" :title="issuesOnly ? '题库生成问题列表' : 'AI 生成题库题目'" width="min(720px, 94vw)" :close-on-click-modal="false">
+    <el-form v-if="!issuesOnly" label-position="top" :disabled="busy || active">
       <el-form-item><el-radio-group v-model="mode"><el-radio-button value="files">按资料生成</el-radio-button><el-radio-button value="supplement">定向补题</el-radio-button></el-radio-group></el-form-item>
       <el-form-item v-if="mode === 'files'" label="来源资料" required>
         <el-select v-model="form.libraryFileIds" multiple filterable :multiple-limit="5" placeholder="选择资料库文件，最多 5 份" style="width:100%">
@@ -127,21 +127,28 @@ async function generate(resume = false) {
     <el-alert v-if="error" :title="error" type="error" :closable="false" />
     <div v-if="job" class="bank-generate__job">
       <template v-if="active">
-        <p>{{ job.status === 'queued' ? '已排队，等待出题执行器' : job.stage === 'analysis' ? '正在通读全文，归纳知识点并整理完整来源…' : `正在逐来源出题 · 已完成 ${job.progressDone} / ${job.progressTotal} 个来源` }}</p>
+        <p>{{ job.status === 'queued' ? '已排队，等待出题执行器' : job.stage === 'analysis' ? '正在通读全文，归纳知识点并整理完整来源…' : `正在逐个请求出题 · 已处理 ${job.progressDone} / ${job.progressTotal} 个请求${job.issues.length ? `，其中失败 ${job.issues.length} 个` : ''}${job.progressTotal > job.progressDone ? `，待处理 ${job.progressTotal - job.progressDone} 个` : ''}` }}</p>
         <el-progress v-if="job.stage === 'generation' && job.progressTotal" :percentage="Math.min(100, Math.round(job.progressDone / job.progressTotal * 100))" />
-        <p class="zj-muted">可以关闭窗口，任务会继续；每个来源完成后直接入库。</p>
+        <p class="zj-muted">按来源逐题生成，每次一道，保存后再出下一道。可以关闭窗口，任务会继续；失败最多尝试 3 次，仍失败则记录原因并继续。</p>
       </template>
       <el-alert v-else-if="job.status === 'succeeded'" :type="job.conflicts.length || job.requestedCount !== null && job.createdCount < job.requestedCount ? 'warning' : 'success'" :closable="false" :title="`已入库 ${job.createdCount} 道${job.requestedCount !== null ? `，目标 ${job.requestedCount} 道` : ''}${job.duplicateCount ? `，相同题跳过 ${job.duplicateCount} 道` : ''}${job.conflicts.length ? `，答案冲突 ${job.conflicts.length} 道未入库` : ''}`" />
-      <el-alert v-else type="error" :closable="false" :title="job.errorMessage" />
-      <template v-if="job.sources.length">
-        <p>{{ groups.length }} 个知识点 · {{ job.sources.length }} 个来源 · 已入库 {{ job.createdCount }} 道<span v-if="job.duplicateCount"> · 相同题跳过 {{ job.duplicateCount }} 道</span></p>
+      <el-alert v-else type="error" :closable="false" :title="issuesOnly ? `生成任务已结束 · 已入库 ${job.createdCount} 道 · 存在 ${job.issues.length} 项问题` : job.errorMessage" />
+      <p v-if="issuesOnly && job.progressTotal > job.progressDone" class="zj-muted">还有 {{ job.progressTotal - job.progressDone }} 个请求未处理。</p>
+      <el-table v-if="job.issues.length" :data="job.issues" size="small" max-height="360" class="bank-generate__issues">
+        <el-table-column prop="sourceTitle" label="来源 / 阶段" min-width="150" show-overflow-tooltip />
+        <el-table-column label="请求" width="70"><template #default="{ row }">{{ row.requestIndex === null ? '—' : `第 ${row.requestIndex} 个` }}</template></el-table-column>
+        <el-table-column label="尝试" width="70"><template #default="{ row }">{{ row.attempts === null ? '—' : `${row.attempts} 次` }}</template></el-table-column>
+        <el-table-column prop="message" label="失败原因" min-width="260" />
+      </el-table>
+      <template v-if="!issuesOnly && job.sources.length">
+        <p>{{ groups.length }} 个知识点 · {{ job.sources.length }} 个来源 · 已入库 {{ job.createdCount }} 道<span v-if="job.duplicateCount"> · 相同题跳过 {{ job.duplicateCount }} 道</span><span v-if="job.issues.length"> · 失败请求 {{ job.issues.length }} 个</span></p>
         <el-collapse class="bank-generate__sources">
           <el-collapse-item v-for="group in groups" :key="group.name" :name="group.name">
             <template #title><div class="bank-generate__group"><span>{{ group.name }} · {{ group.sources.length }} 个来源</span><el-button text type="primary" :disabled="active || busy" @click.stop="supplementFor(group.name)">补题</el-button></div></template>
             <el-table :data="group.sources" size="small">
               <el-table-column prop="title" label="来源" min-width="180" show-overflow-tooltip />
               <el-table-column label="原文位置" min-width="180" show-overflow-tooltip><template #default="{ row }">{{ row.fileName }} · {{ row.locators.join('、') }}</template></el-table-column>
-              <el-table-column label="状态" width="130"><template #default="{ row }"><el-tooltip :disabled="!row.shortfallReason" :content="row.shortfallReason"><span>{{ row.completed ? `已入库 ${row.createdCount}${row.requestedCount !== null ? ` / ${row.requestedCount}` : ''} 道` : active && job.status === 'running' && row === currentSource ? `正在生成 · ${row.createdCount} 道` : '待生成' }}</span></el-tooltip></template></el-table-column>
+              <el-table-column label="状态" width="170"><template #default="{ row }"><el-tooltip :disabled="!row.shortfallReason" :content="row.shortfallReason"><span>{{ row.failedCount ? `已入库 ${row.createdCount} 道 · 失败 ${row.failedCount} 个请求` : row.completed ? `已入库 ${row.createdCount}${row.requestedCount !== null ? ` / ${row.requestedCount}` : ''} 道` : active && job.status === 'running' && row === currentSource ? `正在生成 · ${row.createdCount} 道` : '待处理' }}</span></el-tooltip></template></el-table-column>
               <el-table-column width="65"><template #default="{ row }"><el-button text type="primary" :disabled="active || busy || !row.id" @click="supplementFor(group.name, row.id)">补题</el-button></template></el-table-column>
             </el-table>
           </el-collapse-item>
@@ -163,14 +170,15 @@ async function generate(resume = false) {
     </div>
     <template #footer>
       <el-button :disabled="busy" @click="open = false">关闭</el-button>
-      <el-button :type="job?.status === 'failed' && sameInput ? 'default' : 'primary'" :loading="busy" :disabled="active || !canGenerate" @click="generate()">{{ mode === 'supplement' ? '开始补题' : job ? '新建生成任务' : '生成并入库' }}</el-button>
-      <el-button v-if="job?.status === 'failed' && sameInput" type="primary" :loading="busy" @click="generate(true)">{{ job.sources.length ? '继续未完成来源' : '重新梳理全文' }}</el-button>
+      <el-button v-if="!issuesOnly" :type="job?.status === 'failed' && sameInput ? 'default' : 'primary'" :loading="busy" :disabled="active || !canGenerate" @click="generate()">{{ mode === 'supplement' ? '开始补题' : job ? '新建生成任务' : '生成并入库' }}</el-button>
+      <el-button v-if="job?.status === 'failed' && (issuesOnly || sameInput)" type="primary" :loading="busy" @click="generate(true)">{{ !job.sources.length ? '重新梳理全文' : job.issues.some(issue => issue.requestIndex !== null) ? '仅重试失败部分' : '继续未完成来源' }}</el-button>
     </template>
   </el-dialog>
 </template>
 
 <style scoped>
 .bank-generate__job { margin-top: 16px; }
+.bank-generate__issues { margin-top: 16px; }
 .bank-generate__sources { max-height: 360px; overflow: auto; }
 .bank-generate__quantity { display: flex; align-items: center; gap: 8px; margin-left: 16px; }
 .bank-generate__counts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 24px; width: 100%; margin-top: 12px; }

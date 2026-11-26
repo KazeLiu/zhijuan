@@ -16,8 +16,8 @@ export function bankComparableKey(question: Pick<QuestionContentInput, 'type' | 
   const definition = question.answerDefinition
   return JSON.stringify([
     bankContentKey(question), [...definition.correctOptionIds].sort(),
-    definition.blanks.map((blank) => [blank.id, blank.caseSensitive,
-      [...new Set(blank.acceptedAnswers.map((answer) => normalizeBlank(answer, blank.caseSensitive)))].sort()]),
+    definition.blanks.map((blank) => [blank.id,
+      [...new Set(blank.acceptedAnswers.map((answer) => normalizeBlank(answer)))].sort()]),
   ])
 }
 
@@ -63,4 +63,12 @@ export function bankMistakeStats(db: DatabaseSync, items: BankRecord[]): Map<str
     result.set(id, stats)
   }
   return result
+}
+
+/** 先筛选易错题再排名，列表分页与错题组卷共用同一顺序。 */
+export function rankBankMistakes(items: BankRecord[], stats: Map<string, BankMistakeStats>): BankRecord[] {
+  return items.filter((item) => stats.get(item.id)!.isErrorProne).sort((a, b) => {
+    const left = stats.get(a.id)!, right = stats.get(b.id)!
+    return right.errorRate! - left.errorRate! || right.sampleSize - left.sampleSize || a.id.localeCompare(b.id)
+  })
 }

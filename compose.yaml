@@ -1,0 +1,26 @@
+name: zhijuan
+
+services:
+  zhijuan:
+    image: zhijuan:local
+    pull_policy: never
+    build:
+      context: .
+      dockerfile: Dockerfile
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    ports:
+      - "${PORT:-4310}:4310"
+    environment:
+      NUXT_ADMIN_NAMES: '${NUXT_ADMIN_NAMES:-["管理员"]}'
+      NUXT_SESSION_TTL_DAYS: "${NUXT_SESSION_TTL_DAYS:-7}"
+      NUXT_SESSION_COOKIE_NAME: "${NUXT_SESSION_COOKIE_NAME:-zj_session}"
+      NUXT_DATA_DIR: /app/data
+    volumes:
+      - data:/app/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  data:

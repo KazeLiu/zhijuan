@@ -14,14 +14,21 @@ import { blueprintTotal } from '../../shared/types/exam'
 import { findExam, touchExamVersion } from '../db/queries/exams'
 import { deleteQuestionsNotIn, insertQuestion, normalizeStem } from '../db/queries/questions'
 import {
+  countRetryableBatches,
   countRunningJobs,
   findActiveJob,
   findJob,
   insertJob,
+  listJobBatches,
+  markBatchFailed,
+  markBatchSucceeded,
   markJobFailed,
   markJobProgress,
   markJobSucceeded,
+  planJobBatches,
   requeueJob,
+  resetFailedBatchesToPending,
+  type JobBatchRecord,
   type JobRecord,
 } from '../db/queries/jobs'
 import { findDocumentById, listDocuments } from '../db/queries/documents'
@@ -29,7 +36,7 @@ import { findProviderSettings } from '../db/queries/settings'
 import { ApiFailure, throwApi } from '../utils/respond'
 import { withTransaction } from '../utils/db'
 import { shuffle } from '../utils/shuffle'
-import { FieldErrors, readExpectedVersion } from '../utils/validate'
+import { FieldErrors, isPlainObject, readExpectedVersion } from '../utils/validate'
 import { buildBatchMessages } from '../ai/prompt'
 import { parseBatchResponse } from '../ai/parser'
 import { requestChatCompletion } from '../ai/client'
@@ -89,6 +96,58 @@ function blueprintCountsValid(blueprint: BlueprintDTO): boolean {
   return total >= 1 && total <= MAX_QUESTIONS
 }
 
+/**
+ * 读取任务的批次行；006 之前创建的老任务没有行时按当前计划补写 pending 行。
+ * 补写幂等，不会覆盖已有的 succeeded 结果。
+ */
+function ensureJobBatches(db: DatabaseSync, jobId: string, plan: GenerationPlan, now: number): JobBatchRecord[] {
+  const rows = listJobBatches(db, jobId)
+  if (rows.length > 0) return rows
+  planJobBatches(db, jobId, toBatchPlan(plan), now)
+  return listJobBatches(db, jobId)
+}
+
+function toBatchPlan(plan: GenerationPlan): Array<{ batchIndex: number; type: QuestionType; size: number }> {
+  return plan.batches.map((batch, index) => ({ batchIndex: index, type: batch.type, size: batch.size }))
+}
+
+/**
+ * 反序列化已成功批次的题目快照（契约 §10.3）。
+ * 结构不符一律返回 null：宁可重新请求模型，也不把脏数据写进试卷。
+ */
+function decodeBatchQuestions(raw: string | null, expectedType: QuestionType): PreparedQuestion[] | null {
+  if (raw === null || raw === '') return null
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return null
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) return null
+  const questions: PreparedQuestion[] = []
+  for (const item of parsed) {
+    if (!isPlainObject(item)) return null
+    const type = item.type
+    const stem = item.stem
+    const explanation = item.explanation
+    if (typeof type !== 'string' || !TYPE_ORDER.includes(type as QuestionType) || type !== expectedType) return null
+    if (typeof stem !== 'string' || stem === '') return null
+    if (typeof explanation !== 'string') return null
+    if (!Array.isArray(item.options) || !Array.isArray(item.sourceRefs)) return null
+    if (!isPlainObject(item.answerDefinition)) return null
+    questions.push({
+      existingId: typeof item.existingId === 'string' ? item.existingId : null,
+      type: type as QuestionType,
+      stem,
+      options: item.options as PreparedQuestion['options'],
+      answerDefinition: item.answerDefinition as unknown as PreparedQuestion['answerDefinition'],
+      explanation,
+      sourceRefs: item.sourceRefs as PreparedQuestion['sourceRefs'],
+    })
+  }
+  return questions
+}
+
 /** 创建出题任务（§8.5 23） */
 export function createGenerationJob(
   db: DatabaseSync,
@@ -136,6 +195,8 @@ export function createGenerationJob(
       },
       now,
     )
+    // 批次计划随任务一起落库（契约 §10.3）：重试时按行复用已成功批次
+    planJobBatches(db, jobId, toBatchPlan(plan), now)
   })
   const created = findJob(db, jobId)
   if (!created) throw new ApiFailure('INTERNAL_ERROR', '出题任务创建失败')
@@ -192,11 +253,36 @@ export async function executeGenerationJob(db: DatabaseSync, jobId: string): Pro
       documents.filter((document) => document !== undefined).map((document) => document.id),
     )
     const plan = planGeneration(job.input.blueprint)
+    // 批次行是重试复用的依据；老任务（006 之前创建）缺行时按当前计划补写 pending 行
+    const savedBatches = new Map(
+      ensureJobBatches(db, jobId, plan, Date.now()).map((savedBatch) => [savedBatch.batchIndex, savedBatch]),
+    )
     const collected = new Map<QuestionType, PreparedQuestion[]>()
     let progress = 0
     let questionIndex = 0
 
     for (const batch of plan.batches) {
+      // 每轮进度恰好加一，故 progress 就是当前批次下标（与 plan.batches 一一对应）
+      const batchIndex = progress
+      // 已成功的批次直接复用上次落库的题目，不再请求模型（契约 §10.3）
+      const saved = savedBatches.get(batchIndex)
+      if (saved && saved.status === 'succeeded') {
+        const reused = decodeBatchQuestions(saved.questionsJson, batch.type)
+        if (reused !== null) {
+          questionIndex += reused.length
+          const bucket = collected.get(batch.type) ?? []
+          bucket.push(...reused)
+          collected.set(batch.type, bucket)
+          progress += 1
+          markJobProgress(db, jobId, progress)
+          output.push(
+            `\n\n──── 第 ${progress}/${plan.batches.length} 批（${QUESTION_TYPE_LABELS[batch.type]} ×${batch.size}）复用上次成功结果 ────\n`,
+          )
+          output.flush()
+          continue
+        }
+        console.warn(`[generation] 第 ${progress + 1} 批的批次快照不可用，重新请求模型`)
+      }
       const messages = buildBatchMessages({
         examTitle: exam.title,
         type: batch.type,
@@ -232,6 +318,7 @@ export async function executeGenerationJob(db: DatabaseSync, jobId: string): Pro
       }
       let prepared: PreparedQuestion[] | null = null
       let lastError: unknown = null
+      let attemptsMade = 0
       for (let attempt = 0; attempt < BATCH_MAX_ATTEMPTS; attempt += 1) {
         // 批次分隔标题（管理端展示用）：立即落库，让轮询马上看到进度变化
         output.push(
@@ -240,6 +327,7 @@ export async function executeGenerationJob(db: DatabaseSync, jobId: string): Pro
             : `\n──── 第 ${progress + 1} 批重试 ${attempt + 1}/${BATCH_MAX_ATTEMPTS} ────\n`,
         )
         output.flush()
+        attemptsMade += 1
         try {
           prepared = await runBatch()
           lastError = null
@@ -252,6 +340,10 @@ export async function executeGenerationJob(db: DatabaseSync, jobId: string): Pro
         }
       }
       if (prepared === null) {
+        // 失败也要留证据：批次行记 failed + 错误码，attempts 记本批实际请求次数
+        const code = lastError instanceof ApiFailure ? lastError.code : 'INTERNAL_ERROR'
+        const message = lastError instanceof ApiFailure ? lastError.message : '出题任务执行失败，请重试'
+        markBatchFailed(db, jobId, batchIndex, code, message, attemptsMade, Date.now())
         if (lastError instanceof ApiFailure) {
           throw new ApiFailure(
             lastError.code,
@@ -267,6 +359,8 @@ export async function executeGenerationJob(db: DatabaseSync, jobId: string): Pro
       collected.set(batch.type, bucket)
       progress += 1
       markJobProgress(db, jobId, progress)
+      // 成功即落库：后续批次失败也不影响这批结果，重试时直接复用
+      markBatchSucceeded(db, jobId, batchIndex, JSON.stringify(prepared), Date.now())
     }
 
     const picked: PreparedQuestion[] = []
@@ -284,6 +378,8 @@ export async function executeGenerationJob(db: DatabaseSync, jobId: string): Pro
         if (chosen.length === need) break
       }
       if (chosen.length < need) {
+        // 该题型有效题不足：把它所有批次标回 pending，重试时整型重新生成才有机会补量（契约 §10.3）
+        resetFailedBatchesToPending(db, jobId, [type], Date.now())
         throw new ApiFailure(
           'QUESTION_SET_INVALID',
           `${QUESTION_TYPE_LABELS[type]}有效题目不足：需要 ${need} 道，仅得到 ${chosen.length} 道，请重试`,
@@ -330,8 +426,17 @@ export async function executeGenerationJob(db: DatabaseSync, jobId: string): Pro
   }
 }
 
-/** 重试失败的出题任务（§8.7 32）：仅 failed、草稿与资料未变化、无活动任务 */
-export function retryGenerationJob(db: DatabaseSync, jobId: string, now: number): JobRecord {
+export interface RetryGenerationJobResult {
+  job: JobRecord
+  /** 本次会真正请求模型的批次数：已成功批次复用落库结果，不计入（契约 §10.3） */
+  retriedBatches: number
+}
+
+/**
+ * 重试失败的出题任务（§8.7 32 / §10.3）：仅 failed、草稿与资料未变化、无活动任务。
+ * 不清空已成功批次：它们保留在 job_batches 里，执行时直接复用，重试只补失败/未完成的批次。
+ */
+export function retryGenerationJob(db: DatabaseSync, jobId: string, now: number): RetryGenerationJobResult {
   const job = findJob(db, jobId)
   if (!job) throwApi('NOT_FOUND', '出题任务不存在')
   if (job.status !== 'failed') throwApi('JOB_NOT_RETRYABLE', '只有失败的任务可以重试')
@@ -352,8 +457,13 @@ export function retryGenerationJob(db: DatabaseSync, jobId: string, now: number)
   }
   if (findActiveJob(db, exam.id)) throwApi('JOB_BUSY', '该场次已有进行中的出题任务')
   if (countRunningJobs(db) > 0) throwApi('JOB_BUSY', '已有出题任务正在执行，请稍后重试')
-  if (!requeueJob(db, jobId)) throwApi('JOB_BUSY', '任务状态已变化，请刷新后重试')
+  // 老任务可能没有批次行：先按当前计划补写，保证「只重跑未成功批次」对历史任务同样成立
+  const batches = ensureJobBatches(db, jobId, planGeneration(job.input.blueprint), now)
+  const succeeded = batches.filter((batch) => batch.status === 'succeeded').length
+  const retriedBatches = countRetryableBatches(db, jobId)
+  // progress_done 从已成功批次续跑，前端进度条不会回退到 0
+  if (!requeueJob(db, jobId, succeeded)) throwApi('JOB_BUSY', '任务状态已变化，请刷新后重试')
   const fresh = findJob(db, jobId)
   if (!fresh) throwApi('NOT_FOUND', '出题任务不存在')
-  return fresh
+  return { job: fresh, retriedBatches }
 }

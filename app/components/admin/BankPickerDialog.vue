@@ -47,6 +47,7 @@ function removeConflict() { delete selected.value[props.conflictItemId]; emit('c
   <el-dialog v-model="open" title="手动挑题 · 追加到本场" width="min(1040px, 96vw)" :close-on-click-modal="false" :show-close="!busy" :close-on-press-escape="!busy">
     <el-alert v-if="catalogError" type="error" :closable="false" title="筛选选项加载失败"><el-button @click="reloadCatalog()">重试</el-button></el-alert>
     <AdminBankFilters v-model="filters" :knowledge-points="catalog?.knowledgePoints ?? []" :files="catalog?.files ?? []" />
+    <AdminBankMistakeRange v-model="filters.mistakeTopN" :disabled="busy" />
     <div class="bank-picker__search">
       <el-input v-model="query" placeholder="题干关键词" aria-label="题干关键词" @keyup.enter="search" />
       <el-select v-model="type" aria-label="题型"><el-option label="全部题型" value="" /><el-option v-for="(label, key) in QUESTION_TYPE_LABELS" :key="key" :label="label" :value="key" /></el-select>

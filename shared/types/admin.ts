@@ -41,6 +41,11 @@ export interface ModelRefreshResult {
   selectedModelId: string | null
 }
 
+export interface ModelTestResult {
+  modelId: string
+  durationMs: number
+}
+
 /* ------------------------------ 概览 ------------------------------ */
 
 export interface OverviewExamDTO {

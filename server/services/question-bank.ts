@@ -3,10 +3,10 @@ import type { DatabaseSync } from 'node:sqlite'
 import type { BankAvailabilityDTO, BankFilters, BankItemDTO, BankItemSummary,
   BankListDTO, BankListQuery, BankQuestionInput, BankSourceRef } from '../../shared/types/question-bank'
 import { QUESTION_TYPES } from '../../shared/types/question'
-import { DEFAULT_PAGE_SIZE, DIFFICULTIES, MAX_DOCUMENTS_PER_EXAM, MAX_KNOWLEDGE_POINT_CHARS,
+import { DEFAULT_PAGE_SIZE, DIFFICULTIES, MAX_BANK_PAGE_SIZE, MAX_DOCUMENTS_PER_EXAM, MAX_KNOWLEDGE_POINT_CHARS,
   MAX_QUESTIONS, MAX_QUOTE_CHARS, MAX_TOTAL_DOCUMENT_CHARS, MIN_QUOTE_CHARS, SCORE_TOTAL_UNITS } from '../../shared/constants'
 import { blueprintTotal } from '../../shared/types/exam'
-import { bankContentKey, bankMistakeStats } from './question-bank-stats'
+import { bankContentKey, bankMistakeStats, rankBankMistakes } from './question-bank-stats'
 import { countBankRecords, findBankDuplicate, findBankRecord, findBankRecords,
   insertBankRecord, listBankRecords, updateBankRecord, type BankRecord } from '../db/queries/question-bank'
 import { countAttemptsOfExam, findExam, touchExamVersion, updateExamDraft, type ExamRow } from '../db/queries/exams'
@@ -46,8 +46,11 @@ export function readBankFilters(body: Record<string, unknown>, query = false): B
   const difficulty = errors.oneOf(body, 'difficulty', '难度', DIFFICULTIES)
   const knowledgePoints = readStringList(query ? body.knowledgePoint : body.knowledgePoints, '知识点', query).map(normalizeKnowledgePoint)
   const libraryFileIds = readStringList(query ? body.libraryFileId : body.libraryFileIds, '资料', query)
+  const rawTopN = query ? queryValue(body.mistakeTopN) : body.mistakeTopN
+  const mistakeTopN = errors.int({ mistakeTopN: query && typeof rawTopN === 'string' && /^\d+$/u.test(rawTopN) ? Number(rawTopN) : rawTopN },
+    'mistakeTopN', '错题排名范围', { min: 1, max: Number.MAX_SAFE_INTEGER })
   errors.throwIfAny()
-  return { knowledgePoints, libraryFileIds, difficulty }
+  return { knowledgePoints, libraryFileIds, difficulty, mistakeTopN }
 }
 
 export function readBankListQuery(query: Record<string, unknown>): BankListQuery {
@@ -61,7 +64,7 @@ export function readBankListQuery(query: Record<string, unknown>): BankListQuery
   if (size !== undefined && !/^\d+$/u.test(size)) errors.add('pageSize', '每页数量必须是正整数')
   errors.throwIfAny()
   const parsed = size === undefined ? DEFAULT_PAGE_SIZE : Number(size)
-  const pageSize = Number.isSafeInteger(parsed) && parsed >= 1 && parsed <= 100 ? parsed : DEFAULT_PAGE_SIZE
+  const pageSize = Number.isSafeInteger(parsed) && parsed >= 1 && parsed <= MAX_BANK_PAGE_SIZE ? parsed : DEFAULT_PAGE_SIZE
   return { ...readBankFilters(query, true), page: parsePageValue(query.page), pageSize,
     query: keyword, type, status, errorProneOnly: errorProne === 'true' }
 }
@@ -95,11 +98,12 @@ export function getBankItem(db: DatabaseSync, id: string): BankItemDTO {
 
 export function listBankItems(db: DatabaseSync, query: BankListQuery): BankListDTO {
   const offset = (query.page - 1) * query.pageSize
-  const items = listBankRecords(db, query, query.errorProneOnly ? undefined : { limit: query.pageSize, offset })
+  const ranked = query.errorProneOnly || query.mistakeTopN !== undefined
+  const items = listBankRecords(db, query, ranked ? undefined : { limit: query.pageSize, offset })
   const stats = bankMistakeStats(db, items)
-  const filtered = query.errorProneOnly ? items.filter((item) => stats.get(item.id)!.isErrorProne) : items
-  const total = query.errorProneOnly ? filtered.length : countBankRecords(db, query)
-  const page = query.errorProneOnly ? filtered.slice(offset, offset + query.pageSize) : filtered
+  const filtered = ranked ? rankBankMistakes(items, stats).slice(0, query.mistakeTopN) : items
+  const total = ranked ? filtered.length : countBankRecords(db, query)
+  const page = ranked ? filtered.slice(offset, offset + query.pageSize) : filtered
   return { items: page.map((item) => ({ ...toSummary(item, stats.get(item.id)!),
     stem: item.stem.length > 240 ? `${item.stem.slice(0, 240).replace(/\{\{[^}]*$/u, '')}…` : item.stem })), total, page: query.page,
     pageSize: query.pageSize, totalPages: Math.max(1, Math.ceil(total / query.pageSize)) }
@@ -194,7 +198,7 @@ export function changeBankState(db: DatabaseSync, id: string, version: number, a
 
 export function deleteBankItems(db: DatabaseSync, body: Record<string, unknown>): number {
   const rows = body.items
-  if (!Array.isArray(rows) || !rows.length || rows.length > 100) throw new ApiFailure('VALIDATION_FAILED', '请选择 1–100 道题目')
+  if (!Array.isArray(rows) || !rows.length || rows.length > MAX_BANK_PAGE_SIZE) throw new ApiFailure('VALIDATION_FAILED', `请选择 1–${MAX_BANK_PAGE_SIZE} 道题目`)
   return withTransaction(db, () => {
     const seen = new Set<string>()
     for (const raw of rows) {
@@ -262,6 +266,12 @@ export function importExamQuestions(db: DatabaseSync, examId: string, body: Reco
   return details(db, findBankRecords(db, ids))
 }
 
+/** 只有主动选择错题范围时才计算排名，普通题库组卷沿用原范围。 */
+export function bankQuestionPool(db: DatabaseSync, filters: BankFilters): BankRecord[] {
+  const items = listBankRecords(db, { ...filters, status: 'active' })
+  return filters.mistakeTopN === undefined ? items : rankBankMistakes(items, bankMistakeStats(db, items)).slice(0, filters.mistakeTopN)
+}
+
 function availability(exam: ExamRow, items: BankRecord[]): BankAvailabilityDTO {
   const { picked: _, ...counts } = selectBankQuestions(items, exam.blueprint)
   return { examVersion: exam.version, ...counts }
@@ -269,7 +279,7 @@ function availability(exam: ExamRow, items: BankRecord[]): BankAvailabilityDTO {
 
 export function getBankAvailability(db: DatabaseSync, examId: string, filters: BankFilters): BankAvailabilityDTO {
   const exam = requireExam(db, examId)
-  return availability(exam, listBankRecords(db, { ...filters, status: 'active' }))
+  return availability(exam, bankQuestionPool(db, filters))
 }
 
 function attachSources(db: DatabaseSync, examId: string, items: BankRecord[], now: number): Map<string, string> {
@@ -300,12 +310,16 @@ export function applyBankQuestionsInTransaction(db: DatabaseSync, examId: string
       if (!isPlainObject(body.filters)) throw new ApiFailure('VALIDATION_FAILED', '请传入组卷筛选条件')
       const total = blueprintTotal(exam.blueprint)
       if (total < 1 || total > MAX_QUESTIONS) throw new ApiFailure('VALIDATION_FAILED', '请先保存合计 1–100 道题的题数设定')
-      const pool = listBankRecords(db, { ...readBankFilters(body.filters), status: 'active' })
+      const filters = readBankFilters(body.filters)
+      const pool = bankQuestionPool(db, filters)
       const history = preferLeastUsed ? new Map((db.prepare(`SELECT q.source_bank_group_key AS key, MAX(e.starts_at) AS used_at
         FROM questions q JOIN exams e ON e.id = q.exam_id WHERE e.status = 'published' AND q.source_bank_group_key IS NOT NULL
         GROUP BY q.source_bank_group_key`).all() as Array<{ key: string; used_at: number }>).map((row) => [row.key, row.used_at])) : undefined
       const { picked: selected, ...counts } = selectBankQuestions(pool, exam.blueprint, history)
-      if (QUESTION_TYPES.some((type) => counts.missing[type] > 0)) throw new ApiFailure('QUESTION_BANK_SHORTAGE', '排除同源题后可用考点不足，请调整题数或补充独立考点', { examVersion: exam.version, ...counts })
+      if (QUESTION_TYPES.some((type) => counts.missing[type] > 0)) throw new ApiFailure('QUESTION_BANK_SHORTAGE',
+        filters.mistakeTopN === undefined ? '排除同源题后可用考点不足，请调整题数或补充独立考点'
+          : `错题集前 ${filters.mistakeTopN} 道在同源互斥后不足以满足题型数量，请扩大排名范围、调整题数或关闭错题集选项`,
+        { examVersion: exam.version, ...counts })
       picked = selected
     } else if (body.mode === 'manual') {
       const rows = body.items

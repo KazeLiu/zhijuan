@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite'
+import { PASS_SCORE_UNITS } from '../../../shared/constants'
 import type { AnswerMap } from '../../../shared/types/question'
 import type { GradeChangeDTO } from '../../../shared/types/admin'
 import type { AttemptRecord } from './attempts'
@@ -64,7 +65,11 @@ function buildWhere(examId: string, filter: ResultFilter): { sql: string; params
     params.push(`%${filter.nameKey}%`)
   }
   if (filter.passed !== undefined) {
-    parts.push(filter.passed ? "a.status = 'submitted' AND a.total_score_units >= 6000" : "a.status = 'submitted' AND a.total_score_units < 6000")
+    parts.push(
+      filter.passed
+        ? `a.status = 'submitted' AND a.total_score_units >= ${PASS_SCORE_UNITS}`
+        : `a.status = 'submitted' AND a.total_score_units < ${PASS_SCORE_UNITS}`,
+    )
   }
   if (filter.manual === true) {
     parts.push("a.status = 'submitted'")

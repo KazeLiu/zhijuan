@@ -2,7 +2,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import { JOB_OUTPUT_CHUNK_CHARS, JOB_OUTPUT_MAX_CHARS } from '../../../shared/constants'
 import type { BlueprintDTO } from '../../../shared/types/exam'
 import type { JobDTO, JobStatus } from '../../../shared/types/exam'
-import type { Difficulty } from '../../../shared/types/question'
+import type { Difficulty, QuestionType } from '../../../shared/types/question'
 import { EMPTY_BLUEPRINT } from '../../../shared/types/exam'
 
 /** jobs.input_json 的结构快照（§7.6） */
@@ -206,6 +206,156 @@ export function markJobFailed(
   ).run(failure.errorCode, failure.errorMessage.slice(0, 500), failure.now, jobId)
 }
 
+/**
+ * 出题批次（契约 §10.3）：每批的生成结果与状态单独持久化，重试只重跑 pending / failed 批次。
+ * 批次的 questionIndex 依赖批顺序，因此 batch_index 与 planGeneration 的批次下标一一对应。
+ */
+export type JobBatchStatus = 'pending' | 'succeeded' | 'failed'
+
+export interface JobBatchRecord {
+  jobId: string
+  batchIndex: number
+  type: QuestionType
+  size: number
+  status: JobBatchStatus
+  /** status='succeeded' 时为 PreparedQuestion[] 的 JSON 快照，重试直接复用 */
+  questionsJson: string | null
+  errorCode: string | null
+  errorMessage: string | null
+  /** 累计请求模型的次数（批内重试也计数），用于证明重试没有二次请求已成功批次 */
+  attempts: number
+  updatedAt: number
+}
+
+export interface JobBatchPlanItem {
+  batchIndex: number
+  type: QuestionType
+  size: number
+}
+
+interface RawJobBatchRow {
+  job_id: string
+  batch_index: number
+  type: string
+  size: number
+  status: string
+  questions_json: string | null
+  error_code: string | null
+  error_message: string | null
+  attempts: number
+  updated_at: number
+}
+
+const JOB_BATCH_COLUMNS = `job_id, batch_index, type, size, status, questions_json,
+  error_code, error_message, attempts, updated_at`
+
+function mapJobBatchRow(row: RawJobBatchRow): JobBatchRecord {
+  const status = (['pending', 'succeeded', 'failed'] as string[]).includes(row.status)
+    ? (row.status as JobBatchStatus)
+    : 'failed'
+  return {
+    jobId: row.job_id,
+    batchIndex: Number(row.batch_index),
+    type: row.type as QuestionType,
+    size: Number(row.size),
+    status,
+    questionsJson: row.questions_json,
+    errorCode: row.error_code,
+    errorMessage: row.error_message,
+    attempts: Number(row.attempts),
+    updatedAt: Number(row.updated_at),
+  }
+}
+
+/** 创建任务时写入批次计划：幂等，已存在的批次行（含 succeeded 结果）一律不动 */
+export function planJobBatches(
+  db: DatabaseSync,
+  jobId: string,
+  batches: ReadonlyArray<JobBatchPlanItem>,
+  now: number,
+): number {
+  const insert = db.prepare(
+    `INSERT OR IGNORE INTO job_batches
+       (job_id, batch_index, type, size, status, questions_json, error_code, error_message, attempts, updated_at)
+     VALUES (?, ?, ?, ?, 'pending', NULL, NULL, NULL, 0, ?)`,
+  )
+  let inserted = 0
+  for (const batch of batches) {
+    inserted += Number(insert.run(jobId, batch.batchIndex, batch.type, batch.size, now).changes)
+  }
+  return inserted
+}
+
+export function listJobBatches(db: DatabaseSync, jobId: string): JobBatchRecord[] {
+  const rows = db
+    .prepare(`SELECT ${JOB_BATCH_COLUMNS} FROM job_batches WHERE job_id = ? ORDER BY batch_index ASC`)
+    .all(jobId) as unknown as RawJobBatchRow[]
+  return rows.map(mapJobBatchRow)
+}
+
+/** 本批成功：写入题目内容快照，attempts 记录本次请求模型（重试不再请求已成功批次，故不会再加） */
+export function markBatchSucceeded(
+  db: DatabaseSync,
+  jobId: string,
+  batchIndex: number,
+  questionsJson: string,
+  now: number,
+): void {
+  db.prepare(
+    `UPDATE job_batches
+        SET status = 'succeeded', questions_json = ?, error_code = NULL, error_message = NULL,
+            attempts = attempts + 1, updated_at = ?
+      WHERE job_id = ? AND batch_index = ?`,
+  ).run(questionsJson, now, jobId, batchIndex)
+}
+
+/** 本批失败：保留错误码与信息，attempts 记为本批累计请求次数 */
+export function markBatchFailed(
+  db: DatabaseSync,
+  jobId: string,
+  batchIndex: number,
+  code: string,
+  message: string,
+  attempts: number,
+  now: number,
+): void {
+  db.prepare(
+    `UPDATE job_batches
+        SET status = 'failed', error_code = ?, error_message = ?, attempts = ?, updated_at = ?
+      WHERE job_id = ? AND batch_index = ?`,
+  ).run(code, message.slice(0, 500), attempts, now, jobId, batchIndex)
+}
+
+/**
+ * 把指定题型（缺省为全部题型）的批次改回 pending，供 QUESTION_SET_INVALID 后的重试真正补量。
+ * 保留 questions_json：重跑失败时仍能看到上一次生成过什么；status=pending 的批次不会被复用。
+ */
+export function resetFailedBatchesToPending(
+  db: DatabaseSync,
+  jobId: string,
+  types: QuestionType[] | undefined,
+  now: number,
+): number {
+  if (types && types.length === 0) return 0
+  const placeholders = types ? ` AND type IN (${types.map(() => '?').join(', ')})` : ''
+  const result = db
+    .prepare(
+      `UPDATE job_batches
+          SET status = 'pending', error_code = NULL, error_message = NULL, updated_at = ?
+        WHERE job_id = ?${placeholders}`,
+    )
+    .run(now, jobId, ...(types ?? []))
+  return Number(result.changes)
+}
+
+/** 本次重试会真正请求模型的批次数（pending + failed）；已成功批次不计入 */
+export function countRetryableBatches(db: DatabaseSync, jobId: string): number {
+  const row = db
+    .prepare(`SELECT COUNT(*) AS total FROM job_batches WHERE job_id = ? AND status IN ('pending', 'failed')`)
+    .get(jobId) as { total: number } | undefined
+  return Number(row?.total ?? 0)
+}
+
 /** 进程重启：遗留 running 一律视为中断失败（§11.2） */
 export function failInterruptedJobs(db: DatabaseSync, now: number): number {
   const result = db
@@ -217,16 +367,19 @@ export function failInterruptedJobs(db: DatabaseSync, now: number): number {
   return Number(result.changes)
 }
 
-/** 重试：failed → queued（条件更新保证幂等），并清空上一轮的模型输出 */
-export function requeueJob(db: DatabaseSync, jobId: string): boolean {
+/**
+ * 重试：failed → queued（条件更新保证幂等），并清空上一轮的模型输出。
+ * progressDone 传已成功批次数：复用批次不再请求模型，进度条直接从续跑位置继续。
+ */
+export function requeueJob(db: DatabaseSync, jobId: string, progressDone = 0): boolean {
   // output_* 的重置与状态变更放在同一条 UPDATE 里，保证原子（等价于再调一次 clearJobOutput）
   const result = db
     .prepare(
-      `UPDATE jobs SET status = 'queued', progress_done = 0, error_code = NULL, error_message = NULL,
+      `UPDATE jobs SET status = 'queued', progress_done = ?, error_code = NULL, error_message = NULL,
         started_at = NULL, finished_at = NULL, output_text = NULL, output_chars = 0
        WHERE id = ? AND status = 'failed'`,
     )
-    .run(jobId)
+    .run(progressDone, jobId)
   return Number(result.changes) === 1
 }
 
