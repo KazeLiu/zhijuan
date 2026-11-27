@@ -100,7 +100,4 @@ export const JOB_OUTPUT_CHUNK_CHARS = 20_000
 /** 出题难度取值（中文标签见 shared/types/question.ts 的 DIFFICULTY_LABELS） */
 export const DIFFICULTIES = ['easy', 'normal', 'hard'] as const
 
-/** 题库易错标记：至少 10 人已作答，未满分率至少 50%。 */
-export const BANK_MISTAKE_MIN_SAMPLE = 10
-export const BANK_MISTAKE_RATE_THRESHOLD = 0.5
 export const MAX_KNOWLEDGE_POINT_CHARS = 100

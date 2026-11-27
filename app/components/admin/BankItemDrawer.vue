@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { BankItemDTO, BankQuestionInput, QuestionContentInput } from '#shared/types'
 import { BANK_STATUS_LABELS, DIFFICULTY_LABELS } from '#shared/types'
-import { BANK_MISTAKE_MIN_SAMPLE, MAX_KNOWLEDGE_POINT_CHARS, MAX_QUOTE_CHARS } from '#shared/constants'
+import { MAX_KNOWLEDGE_POINT_CHARS, MAX_QUOTE_CHARS } from '#shared/constants'
 const open = defineModel<boolean>({ required: true })
 const props = withDefaults(defineProps<{ itemId?: string; intent?: 'view' | 'edit' | 'create'; readOnly?: boolean }>(), { itemId: '', intent: 'view', readOnly: false })
 const emit = defineEmits<{ changed: [] }>()
@@ -130,18 +130,17 @@ function updateContent(value: QuestionContentInput) { Object.assign(form, value)
         </section>
         <NuxtLink v-if="record.originExamId" :to="`/admin/exams/${record.originExamId}`">查看来源场次</NuxtLink>
         <h3>作答表现</h3>
-        <p class="zj-muted">同一姓名取最早一次可比的已作答记录；未满分包含部分得分，不含未作答。</p>
+        <p class="zj-muted">按各场实际交卷人次累计，错误率为未满分人次占比；包含未作答，人工最终分优先。</p>
         <el-descriptions :column="2" border>
-          <el-descriptions-item label="已作答人数">{{ record.mistakeStats.sampleSize }}</el-descriptions-item>
-          <el-descriptions-item label="未满分率">{{ record.mistakeStats.errorRate === null ? '—' : `${(record.mistakeStats.errorRate * 100).toFixed(1)}%` }}</el-descriptions-item>
+          <el-descriptions-item label="交卷人次">{{ record.mistakeStats.sampleSize }}</el-descriptions-item>
+          <el-descriptions-item label="错误率">{{ record.mistakeStats.errorRate === null ? '—' : `${(record.mistakeStats.errorRate * 100).toFixed(1)}%` }}</el-descriptions-item>
           <el-descriptions-item label="满分">{{ record.mistakeStats.correctCount }}</el-descriptions-item>
           <el-descriptions-item label="部分得分">{{ record.mistakeStats.partialCount }}</el-descriptions-item>
-          <el-descriptions-item label="已作答零分">{{ record.mistakeStats.zeroCount }}</el-descriptions-item>
-          <el-descriptions-item label="仅未作答">{{ record.mistakeStats.unansweredCount }}</el-descriptions-item>
+          <el-descriptions-item label="作答零分">{{ record.mistakeStats.zeroCount }}</el-descriptions-item>
+          <el-descriptions-item label="未作答零分">{{ record.mistakeStats.unansweredCount }}</el-descriptions-item>
         </el-descriptions>
-        <p v-if="record.mistakeStats.sampleSize === 0" class="zj-muted">暂无作答数据</p>
-        <p v-else-if="record.mistakeStats.sampleSize < BANK_MISTAKE_MIN_SAMPLE" class="zj-muted">样本不足：{{ record.mistakeStats.sampleSize }} 人</p>
-        <el-tag v-else-if="record.mistakeStats.isErrorProne" type="danger">易错</el-tag>
+        <p v-if="record.mistakeStats.sampleSize === 0" class="zj-muted">暂无交卷数据</p>
+        <el-tag v-else-if="record.mistakeStats.isErrorProne" type="danger">错题</el-tag>
       </template>
       <el-form v-else label-position="top" :disabled="busy">
         <el-form-item label="同源考点">
@@ -196,10 +195,12 @@ function updateContent(value: QuestionContentInput) { Object.assign(form, value)
 </template>
 <style scoped>
 .bank-drawer__notice { margin-bottom: 16px; }
-.bank-drawer__meta, .bank-drawer__actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
-.bank-drawer__actions { justify-content: flex-end; }
+.bank-drawer__meta, .bank-drawer__actions { display: flex; align-items: center; gap: 12px; }
+.bank-drawer__meta { flex-wrap: wrap; }
+.bank-drawer__actions { justify-content: safe flex-end; overflow-x: auto; }
 .bank-drawer__sources { width: 100%; display: grid; gap: 16px; }
-.bank-drawer__source { padding: 12px; border: 1px solid var(--zj-border); border-radius: var(--zj-radius); margin: 10px 0; }
+.bank-drawer__source { padding: 16px; border: 1px solid var(--zj-border); border-radius: var(--zj-radius); margin: 12px 0; }
+.bank-drawer__source > .el-button { white-space: normal; height: auto; text-align: left; justify-content: flex-start; }
 .bank-drawer__source > * + * { margin-top: 8px; }
 .bank-drawer__source blockquote { margin: 8px 0; white-space: pre-wrap; line-height: 1.6; }
 .bank-drawer__error { color: var(--zj-danger); }

@@ -141,7 +141,7 @@ export function updateBankRecord(db: DatabaseSync, id: string, question: BankQue
 
 export interface BankSampleRow {
   bank_id: string; question_id: string; type: QuestionType; stem: string; options_json: string
-  answer_definition_json: string; max_score_units: number; name_key: string
+  answer_definition_json: string; max_score_units: number; attempt_id: string
   answer_json: string | null; final_score: number
 }
 
@@ -151,7 +151,7 @@ export function listBankSamples(db: DatabaseSync, ids: string[]): BankSampleRow[
   for (let offset = 0; offset < ids.length; offset += 500) {
     const batch = ids.slice(offset, offset + 500)
     rows.push(...db.prepare(`SELECT b.id AS bank_id, q.id AS question_id, q.type, q.stem, q.options_json,
-      q.answer_definition_json, q.max_score_units, a.name_key, ans.answer_json,
+      q.answer_definition_json, q.max_score_units, a.id AS attempt_id, ans.answer_json,
       COALESCE(ans.override_score_units, ans.auto_score_units, 0) AS final_score
       FROM question_bank_items b JOIN questions q ON (q.source_bank_item_id = b.id
         OR (q.exam_id = b.origin_exam_id AND q.id = b.origin_question_id))

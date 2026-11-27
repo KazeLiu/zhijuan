@@ -30,13 +30,16 @@ export interface BankQuestionInput extends QuestionContentInput {
 }
 
 export interface BankMistakeStats {
+  /** 各场可比题目的已交卷人次，包含未作答；同一人参加不同场次分别计入。 */
   sampleSize: number
   correctCount: number
   partialCount: number
   zeroCount: number
   errorCount: number
+  /** 未作答且最终零分的人次；人工给满分或部分分时计入对应得分类别。 */
   unansweredCount: number
   errorRate: number | null
+  /** 是否有未满分的交卷记录，保留原字段名供列表筛选和组卷使用。 */
   isErrorProne: boolean
 }
 
@@ -65,7 +68,7 @@ export interface BankFilters {
   knowledgePoints?: string[]
   libraryFileIds?: string[]
   difficulty?: Difficulty
-  /** 限定为当前筛选范围内、按错误率排名的前 N 道易错题；省略时使用普通题库。 */
+  /** 限定为当前筛选范围内、按错误率排名的前 N 道错题；省略时使用普通题库。 */
   mistakeTopN?: number
 }
 
@@ -75,6 +78,7 @@ export interface BankListQuery extends BankFilters {
   query?: string
   type?: QuestionType
   status?: BankStatus
+  /** 仅显示有错误记录的题目。 */
   errorProneOnly?: boolean
 }
 export type BankListDTO = Paginated<BankItemSummary>
