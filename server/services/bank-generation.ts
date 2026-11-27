@@ -17,6 +17,7 @@ import { bankAnalysisMaterial, generationIssues, generationProgress, generationS
   parseBankGenerationPlan, requestSettled, resolveGenerationSourceGroup, sourceOutcomes, sourceRequestCount,
   type BankGenerationPlan, type GenerationSource } from './bank-generation-plan'
 import { prepareBankSupplement } from './bank-supplement'
+import { markedDocumentPlan, markedBlankTemplates, markedSourceTypes } from './marked-document'
 import { ApiFailure } from '../utils/respond'
 import { FieldErrors, isPlainObject } from '../utils/validate'
 import { withTransaction } from '../utils/db'
@@ -80,7 +81,9 @@ async function requestWithRetry<T>(config: ModelConfig, messages: ChatMessage[],
 /** 本轮已遍历结束但仍有失败请求：用既有 failed 状态与汇总说明表达，不伪报全部成功。 */
 function failureSummary(issues: BankGenerationIssue[]): string {
   const first = issues[0]!
-  return `本轮已遍历全部来源，${issues.length} 个模型请求尝试 ${REQUEST_ATTEMPTS} 次仍失败（首个：来源「${first.sourceTitle}」`
+  const summary = issues.every((issue) => issue.attempts === REQUEST_ATTEMPTS)
+    ? `${issues.length} 个模型请求尝试 ${REQUEST_ATTEMPTS} 次仍失败` : `${issues.length} 个出题请求仍失败`
+  return `本轮已遍历全部来源，${summary}（首个：来源「${first.sourceTitle}」`
     + `第 ${first.requestIndex} 个请求：${first.message}）。已成功的请求保留，可只重试失败部分。`
 }
 
@@ -100,18 +103,19 @@ function jobDTO(row: JobRow): BankGenerationJobDTO {
     issues.push({ sourceTitle: plan ? '任务执行' : '全文梳理', requestIndex: null, attempts: null, message: row.error_message })
   }
   return { id: row.id, status: row.status,
-    input: input.mode === 'supplement' ? input : { libraryFileIds: input.libraryFileIds, difficulty: input.difficulty, extraPrompt: input.extraPrompt },
+    input: input.mode === 'supplement' ? input : { libraryFileIds: input.libraryFileIds, documentMode: input.documentMode ?? 'standard', difficulty: input.difficulty, extraPrompt: input.extraPrompt },
     stage: plan !== null || row.status === 'succeeded' ? 'generation' : 'analysis',
     progressDone: row.progress_done, progressTotal: row.progress_total, generatedCount, createdCount,
     duplicateCount: plan ? generatedCount - createdCount - conflicts.length : 0,
-    requestedCount: input.mode === 'supplement' ? input.quantity.mode === 'auto' ? input.quantity.total : Object.values(input.quantity.counts).reduce((sum, count) => sum + count, 0) : null,
+    requestedCount: input.mode === 'supplement' ? input.quantity.mode === 'auto' ? input.quantity.total : Object.values(input.quantity.counts).reduce((sum, count) => sum + count, 0)
+      : input.documentMode === 'marked' && plan ? generationProgress(plan).total : null,
     conflicts,
     sources: plan?.sources.map((source) => ({ id: source.id ?? null, title: source.title, knowledgePoint: source.knowledgePoint,
       fileName: source.segments[0]!.fileName, locators: [...new Set(source.segments.map((segment) => segment.locator))],
       completed: source.completed, failedCount: sourceOutcomes(source).filter((result) => result.status === 'failed').length,
       generatedCount: source.generatedCount, createdCount: source.createdCount,
-      requestedCount: input.mode === 'supplement' ? source.batches?.reduce((sum, batch) => sum + batch.total, 0) ?? null : null,
-      shortfallReason: source.shortfallReason ?? '' })) ?? [],
+      requestedCount: input.mode === 'supplement' || source.markedRules ? source.batches?.reduce((sum, batch) => sum + batch.total, 0) ?? null : null,
+      shortfallReason: source.shortfallReason ?? '', markedRules: source.markedRules })) ?? [],
     ignored: plan?.ignored ?? [],
     issues,
     errorMessage: row.error_message, createdAt: row.created_at }
@@ -137,8 +141,11 @@ export function createBankGeneration(db: DatabaseSync, body: Record<string, unkn
   } else {
     const ids = body.libraryFileIds
     if (!Array.isArray(ids) || !ids.length || ids.length > MAX_DOCUMENTS_PER_EXAM || ids.some((id) => typeof id !== 'string' || !id) || new Set(ids).size !== ids.length) throw new ApiFailure('VALIDATION_FAILED', '请选择 1–5 份不重复的资料')
-    bankAnalysisMaterial(db, ids as string[])
-    input = { libraryFileIds: ids as string[], difficulty, extraPrompt }
+    const documentMode = errors.oneOf(body, 'documentMode', '资料规则', ['standard', 'marked'] as const) ?? 'standard'
+    errors.throwIfAny()
+    if (documentMode === 'marked') plan = markedDocumentPlan(db, ids as string[])
+    else bankAnalysisMaterial(db, ids as string[])
+    input = { libraryFileIds: ids as string[], documentMode, difficulty, extraPrompt }
   }
   if (!readModelConfig(db).config) throw new ApiFailure('MODEL_NOT_CONFIGURED', '请先完成模型设置')
   withTransaction(db, () => {
@@ -238,9 +245,11 @@ export async function executeNextBankGeneration(db: DatabaseSync): Promise<void>
         source.sourceGroup = resolveGenerationSourceGroup(source, pool)
         const groupKey = bankSourceGroupKey({ id: '', sourceGroup: source.sourceGroup, sourceRefs })
         const existing = pool.filter((item) => bankSourceGroupKey(item) === groupKey)
+        const requestedType = quota.counts ? QUESTION_TYPES.find((type) => quota.counts![type] > 0) : undefined
+        const allowedTypes = source.markedRules ? markedSourceTypes(source) : QUESTION_TYPES
         const messages = buildBankMessages({ difficulty: input.difficulty, extraPrompt: input.extraPrompt,
           title: source.title, knowledgePoint: source.knowledgePoint, materials: source.segments,
-          type: quota.counts ? QUESTION_TYPES.find((type) => quota.counts![type] > 0) : undefined,
+          type: requestedType, allowedTypes, markedRules: source.markedRules,
           existingQuestions: existing.map((item) => ({ type: item.type, stem: item.stem, options: item.options, answerDefinition: item.answerDefinition })),
         })
         const readBatch = (raw: string): PreparedBatch => {
@@ -257,6 +266,7 @@ export async function executeNextBankGeneration(db: DatabaseSync): Promise<void>
               const returnedType = typeof item.type === 'string' ? JSON.stringify(item.type.slice(0, 60)) : String(item.type)
               throw new ApiFailure('UPSTREAM_INVALID_RESPONSE', `第 ${questionIndex + 1} 题的 type=${returnedType} 不支持；应为 ${QUESTION_TYPES.join(' / ')}`)
             }
+            if (!allowedTypes.includes(type) || source.markedRules && type === 'fill_blank') throw new ApiFailure('UPSTREAM_INVALID_RESPONSE', '标记资料的填空由程序按 <> 生成，模型只能生成允许的判断或选择题')
             counts[type]++
             if (quota.counts && counts[type] > quota.counts[type]) throw new ApiFailure('UPSTREAM_INVALID_RESPONSE', '模型返回的题型不符合本次补题要求')
             const normalized = parseBatchResponse(JSON.stringify([{ ...item, type, sourceRefs }]), type, 1)[0]!
@@ -270,7 +280,14 @@ export async function executeNextBankGeneration(db: DatabaseSync): Promise<void>
         const track = { attempts: 0 }
         let batch: PreparedBatch
         try {
-          batch = await requestWithRetry(config, messages, ownsJob, readBatch, track)
+          if (source.markedRules && requestedType === 'fill_blank') {
+            const existingKeys = new Set(existing.map(bankContentKey))
+            const template = markedBlankTemplates(source)[quota.blankTemplateIndex ?? -1]
+            const content = template && !existingKeys.has(bankContentKey(template)) ? template : undefined
+            batch = { count: content ? 1 : 0, questions: content ? [prepareBankQuestion(db, { ...content,
+              sourceGroup: source.sourceGroup, knowledgePoint: source.knowledgePoint, difficulty: input.difficulty, sourceRefs })] : [],
+              reason: '此来源的指定填空均已入库，没有额外挖空或重复生成' }
+          } else batch = await requestWithRetry(config, messages, ownsJob, readBatch, track)
         } catch (error) {
           if (error instanceof StaleOwner) return
           if (!(error instanceof ApiFailure) || !RETRYABLE_CODES.has(error.code)) throw error

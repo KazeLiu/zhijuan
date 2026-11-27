@@ -1,6 +1,6 @@
 import type { ChatMessage } from './client'
 import type { AnswerDefinition, Difficulty, QuestionOption, QuestionType } from '../../shared/types/question'
-import type { QuestionContentInput } from '../../shared/types/question-bank'
+import type { MarkedSourceRules, QuestionContentInput } from '../../shared/types/question-bank'
 import { DIFFICULTY_LABELS, QUESTION_TYPE_LABELS, QUESTION_TYPES } from '../../shared/types/question'
 import { MAX_KNOWLEDGE_POINT_CHARS, MAX_OPTION_TEXT_CHARS } from '../../shared/constants'
 
@@ -183,11 +183,13 @@ export interface BankPromptInput {
   materials: Array<{ locator: string; text: string }>
   existingQuestions: Array<Pick<QuestionContentInput, 'type' | 'stem' | 'options' | 'answerDefinition'>>
   type?: QuestionType
+  allowedTypes?: readonly QuestionType[]
+  markedRules?: MarkedSourceRules
 }
 
 /** 每次只生成一道题；指定题型时只提供该题型的规则与结构。 */
 export function buildBankMessages(input: BankPromptInput): ChatMessage[] {
-  const types = input.type ? [input.type] : QUESTION_TYPES
+  const types = input.type ? [input.type] : input.allowedTypes ?? QUESTION_TYPES
   const examples = types.map((type) => ({
     type,
     stem: type === 'fill_blank' ? '需要填写的内容是 {{1}}。' : '请替换为资料中能够回答的完整题干。',
@@ -203,6 +205,12 @@ export function buildBankMessages(input: BankPromptInput): ChatMessage[] {
     { role: 'user', content: [
       `只围绕下面这一个完整来源生成一道题库新题，难度「${DIFFICULTY_LABELS[input.difficulty]}」。本次只生成一道题，不要一次输出多道。`,
       `知识点：${input.knowledgePoint}；来源：${input.title}`,
+      ...(input.markedRules ? [
+        '本来源是带标记的层级条目。下面结构由程序解析：context 是上级标题或前提，memorize 表示本节继承或自带 ★ 熟记要求。',
+        '父级前提及子项属于同一完整来源。题干必须交代所属对象和必要条件，不把其他子项的事实混成本项答案。',
+        '本次只生成判断或选择题，原文 <> 内的内容可作为事实依据，题干和选项不保留 ★ 或尖括号。填空题由程序另行构造，不能自行挖空。',
+        JSON.stringify(input.markedRules.sections),
+      ] : []),
       input.type ? `本次必须为${QUESTION_TYPE_LABELS[input.type]}，这是新增题目，不包括已有题。`
         : '由来源内容选择一种适合的题型；优先补充已有题尚未覆盖的题型或考查角度，同一种题型也允许有不同问法。',
       '本次允许的 type 值及含义：',

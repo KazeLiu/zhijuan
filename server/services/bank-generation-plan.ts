@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite'
-import type { BankSourceRef, BankGenerationConflict, BankGenerationIssue } from '../../shared/types/question-bank'
+import type { BankSourceRef, BankGenerationConflict, BankGenerationIssue, MarkedSourceRules } from '../../shared/types/question-bank'
 import { QUESTION_TYPES, type QuestionType } from '../../shared/types/question'
 import { MAX_QUOTE_CHARS, MIN_QUOTE_CHARS, MAX_TOTAL_DOCUMENT_CHARS } from '../../shared/constants'
 import type { BankAnalysisSegment } from '../ai/prompt'
@@ -38,11 +38,12 @@ export interface GenerationSource {
   completed: boolean
   generatedCount: number
   createdCount: number
-  batches?: Array<{ total: number; counts?: Record<QuestionType, number> }>
+  batches?: Array<{ total: number; counts?: Record<QuestionType, number>; blankTemplateIndex?: number }>
   /** 旧任务的连续成功前缀；新任务改用 requests 逐请求记录 */
   completedBatches?: number
   requests?: SourceRequestResult[]
   shortfallReason?: string
+  markedRules?: MarkedSourceRules
 }
 
 export interface BankGenerationPlan {
@@ -91,7 +92,7 @@ export function normalizeSourceRequests(source: GenerationSource, retrying: bool
     for (const type of types) {
       const counts = type === null ? undefined : { single_choice: 0, multiple_choice: 0, true_false: 0, fill_blank: 0 }
       if (counts && type !== null) counts[type] = 1
-      batches.push({ total: 1, ...(counts ? { counts } : {}) })
+      batches.push({ ...batch, total: 1, ...(counts ? { counts } : {}) })
       requests.push(retrying && previous.status === 'failed' ? { status: 'pending', attempts: 0 } : { ...previous })
     }
   }
@@ -121,10 +122,15 @@ export function generationIssues(plan: BankGenerationPlan): BankGenerationIssue[
 }
 
 /** 分段编号只供模型引用；快照始终保留实际文件和定位，不让模型重写标识。 */
-export function bankAnalysisMaterial(db: DatabaseSync, ids: string[]): SourceSegment[] {
+export function bankGenerationFiles(db: DatabaseSync, ids: string[]) {
   const files = findLibraryFilesByIds(db, ids)
   if (files.length !== ids.length || files.some((file) => file.status !== 'parsed')) throw new ApiFailure('QUESTION_SET_INVALID', '所选资料不存在或未解析成功')
   if (files.reduce((sum, file) => sum + file.charCount, 0) > MAX_TOTAL_DOCUMENT_CHARS) throw new ApiFailure('DOCUMENT_CHARS_EXCEEDED', '所选资料超过 40000 字，请缩小范围')
+  return files
+}
+
+export function bankAnalysisMaterial(db: DatabaseSync, ids: string[]): SourceSegment[] {
+  const files = bankGenerationFiles(db, ids)
   const result: SourceSegment[] = []
   for (const file of files) {
     for (const segment of listLibrarySegments(db, file.id)) {
@@ -208,6 +214,13 @@ export function parseBankGenerationPlan(raw: string, material: SourceSegment[], 
 }
 
 export function resolveGenerationSourceGroup(source: GenerationSource, existing: BankRecord[]): string {
+  // 标记资料的范围由编号层级固定，不再用原文包含关系合并其他范围的旧分组。
+  if (source.markedRules) {
+    const refsKey = (refs: BankSourceRef[]) => JSON.stringify(refs.map((ref) =>
+      [ref.libraryFileId, ref.locator, normalizeDocText(ref.quote)]).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))))
+    const expected = refsKey(generationSourceRefs(source))
+    existing = existing.filter((item) => refsKey(item.sourceRefs) === expected)
+  }
   const byLocator = new Map<string, string>()
   for (const segment of source.segments) byLocator.set(segment.locator, (byLocator.get(segment.locator) ?? '') + segment.text)
   const groups = new Map(existing.filter((item) => item.sourceGroup && item.sourceRefs.length && item.sourceRefs.every((ref) =>

@@ -11,6 +11,8 @@ import { validateBankSources } from './question-bank'
 import { ApiFailure } from '../utils/respond'
 import { FieldErrors, isPlainObject } from '../utils/validate'
 import { shuffle } from '../utils/shuffle'
+import { markedBlankTemplates, markedSourceTypes } from './marked-document'
+import { bankContentKey } from './question-bank-stats'
 
 function questionCounts(items: BankRecord[]): Map<string, number> {
   const counts = new Map<string, number>()
@@ -27,9 +29,9 @@ function sourceKey(source: GenerationSource): string {
 
 export function listBankGenerationSources(db: DatabaseSync): BankGenerationSourceSummary[] {
   const counts = questionCounts(listBankRecords(db, {}))
-  return listGenerationSources(db).map((source) => ({ id: source.id!, title: source.title, knowledgePoint: source.knowledgePoint,
+  return listGenerationSources(db).map<BankGenerationSourceSummary>((source) => ({ id: source.id!, title: source.title, knowledgePoint: source.knowledgePoint,
     fileName: source.segments[0]!.fileName, locators: [...new Set(source.segments.map((segment) => segment.locator))],
-    questionCount: counts.get(sourceKey(source)) ?? 0 }))
+    questionCount: counts.get(sourceKey(source)) ?? 0, documentMode: source.markedRules ? 'marked' : undefined }))
 }
 
 export function prepareBankSupplement(db: DatabaseSync, body: Record<string, unknown>, difficulty: Difficulty, extraPrompt: string): { input: BankSupplementRequest; plan: BankGenerationPlan } {
@@ -69,10 +71,20 @@ export function prepareBankSupplement(db: DatabaseSync, body: Record<string, unk
   })).sort((a, b) => (counts.get(sourceKey(a)) ?? 0) - (counts.get(sourceKey(b)) ?? 0))
   // 题量属于本次范围的总数，轮流分给所选来源；每次请求只生成一道题。
   slots.forEach((type, index) => {
-    const source = sources[index % sources.length]!
-    const counts = type === null ? undefined : { single_choice: 0, multiple_choice: 0, true_false: 0, fill_blank: 0 }
-    if (counts && type !== null) counts[type] = 1
-    source.batches!.push({ total: 1, ...(counts ? { counts } : {}) })
+    const eligible = sources.filter((source) => type === null || !source.markedRules || markedSourceTypes(source).includes(type))
+    if (!eligible.length) throw new ApiFailure('VALIDATION_FAILED', '所选标记来源没有熟记内容中的 <> 填空位置；普通内容只出判断和选择，请调整来源或题型')
+    const source = eligible[index % eligible.length]!
+    const types = source.markedRules ? markedSourceTypes(source) : null
+    const actualType = type ?? (types ? types[source.batches!.length % types.length]! : null)
+    const counts = actualType === null ? undefined : { single_choice: 0, multiple_choice: 0, true_false: 0, fill_blank: 0 }
+    if (counts && actualType !== null) counts[actualType] = 1
+    let blankTemplateIndex: number | undefined
+    if (source.markedRules && actualType === 'fill_blank') {
+      const existingKeys = new Set(existing.filter((item) => bankSourceGroupKey(item) === sourceKey(source)).map(bankContentKey))
+      const assigned = new Set(source.batches!.map((batch) => batch.blankTemplateIndex))
+      blankTemplateIndex = markedBlankTemplates(source).findIndex((question, index) => !assigned.has(index) && !existingKeys.has(bankContentKey(question)))
+    }
+    source.batches!.push({ total: 1, ...(counts ? { counts } : {}), ...(blankTemplateIndex === undefined ? {} : { blankTemplateIndex }) })
   })
   return { input: { mode: 'supplement', sourceIds: ids as string[], difficulty, extraPrompt, quantity },
     plan: { sources: sources.filter((source) => source.batches!.length), ignored: [], conflicts: [] } }

@@ -13,5 +13,6 @@ import { migration as m009 } from './009-rolling-question-bank'
 import { migration as m010 } from './010-bank-source-generation'
 import { migration as m011 } from './011-bank-targeted-generation'
 import { migration as m012 } from './012-blank-corrections'
+import { migration as m013 } from './013-marked-source-rules'
 
-export const migrations: Migration[] = [m001, m002, m003, m004, m005, m006, m007, m008, m009, m010, m011, m012]
+export const migrations: Migration[] = [m001, m002, m003, m004, m005, m006, m007, m008, m009, m010, m011, m012, m013]

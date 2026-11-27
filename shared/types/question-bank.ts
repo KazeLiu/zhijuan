@@ -94,8 +94,19 @@ export interface BankAvailabilityDTO {
 export interface BankFileGenerationRequest {
   mode?: 'files'
   libraryFileIds: string[]
+  documentMode?: 'standard' | 'marked'
   difficulty: Difficulty
   extraPrompt: string
+}
+
+/** 标记资料的结构快照；父级 ★ 向下继承，填空位置仅取本节 <>。 */
+export interface MarkedSourceRules {
+  sections: Array<{ context: string[]; text: string; memorize: boolean }>
+}
+
+export interface BankMarkedPreviewDTO {
+  sources: Array<{ title: string; fileName: string; knowledgePoint: string; rules: MarkedSourceRules; blankQuestionCount: number }>
+  ignored: Array<{ fileName: string; locators: string[]; reason: string }>
 }
 
 export type BankSupplementQuantity =
@@ -119,6 +130,7 @@ export interface BankGenerationSourceSummary {
   fileName: string
   locators: string[]
   questionCount: number
+  documentMode?: 'marked'
 }
 
 export interface BankGenerationConflict {
@@ -165,6 +177,7 @@ export interface BankGenerationJobDTO {
     createdCount: number
     requestedCount: number | null
     shortfallReason: string
+    markedRules?: MarkedSourceRules
   }>
   ignored: Array<{ fileName: string; locators: string[]; reason: string }>
   /** 重试耗尽仍失败的请求，成功后移除；任务可 failed 但仍有部分成功结果 */
