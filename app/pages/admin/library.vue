@@ -249,8 +249,10 @@ function usageTip(record: unknown): string {
           <el-option label="TXT" value="txt" />
           <el-option label="MD" value="md" />
         </el-select>
-        <el-button type="primary" plain @click="applyFilters">查询</el-button>
-        <el-button text @click="resetFilters">重置</el-button>
+        <div class="zj-actions">
+          <el-button type="primary" plain @click="applyFilters">查询</el-button>
+          <el-button text @click="resetFilters">重置</el-button>
+        </div>
       </div>
       <input
         ref="fileInput"
@@ -299,7 +301,7 @@ function usageTip(record: unknown): string {
       @retry="refresh()"
     />
 
-    <StatePanel v-else-if="pending && !data" state="loading" title="正在加载资料库…" :loading-rows="6" />
+    <StatePanel v-else-if="!data" state="loading" title="正在加载资料库…" :loading-rows="6" />
 
     <StatePanel
       v-else-if="rows.length === 0"
@@ -380,7 +382,7 @@ function usageTip(record: unknown): string {
           </template>
         </el-table-column>
 
-        <el-table-column label="操作" width="150" align="right" fixed="right">
+        <el-table-column class-name="zj-table-actions" label="操作" width="150" align="right" fixed="right">
           <template #default="{ row }">
             <el-button text type="primary" @click="openPreview(row)">预览</el-button>
             <el-tooltip :disabled="row.usageCount === 0 && row.questionBankCount === 0" content="仍被场次或题库引用，请先移除引用" placement="top">
@@ -443,18 +445,18 @@ function usageTip(record: unknown): string {
 }
 
 .library__filter-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: minmax(160px, 320px) 180px max-content;
+  gap: 12px;
   align-items: center;
 }
 
 .library__keyword {
-  max-width: 280px;
+  min-width: 0;
 }
 
 .library__format {
-  width: 150px;
+  width: 100%;
 }
 
 .library__file {
@@ -502,7 +504,7 @@ function usageTip(record: unknown): string {
 }
 
 .library__preview-meta {
-  margin: 0 0 10px;
+  margin: 0 0 12px;
   font-size: 13px;
 }
 
@@ -510,7 +512,7 @@ function usageTip(record: unknown): string {
   margin: 0;
   max-height: 56vh;
   overflow: auto;
-  padding: 14px;
+  padding: 16px;
   background: #fff;
   border: 1px solid var(--zj-border);
   border-radius: var(--zj-radius);
@@ -525,5 +527,9 @@ function usageTip(record: unknown): string {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+@media (max-width: 768px) {
+  .library__filter-row { grid-template-columns: minmax(0, 1fr) max-content; }
+  .library__keyword { grid-column: 1 / -1; }
 }
 </style>

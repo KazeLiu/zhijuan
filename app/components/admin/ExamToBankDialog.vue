@@ -154,10 +154,11 @@ async function submit() {
 <style scoped>
 .to-bank__bulk { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
 .to-bank__bulk .el-select { flex: 1; min-width: 180px; }
+.to-bank__bulk .zj-kp-input { flex: 1 1 240px; min-width: 0; }
 .to-bank__suggest-alert { margin-bottom: 12px; }
-.to-bank__suggesting { display: flex; align-items: center; gap: 6px; margin: 0 0 12px; }
+.to-bank__suggesting { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; }
 .to-bank__item { padding: 16px 0; border-bottom: 1px solid var(--zj-border); }
 .to-bank__ref { margin-bottom: 16px; }
-.to-bank__ref blockquote { margin: 6px 0; white-space: pre-wrap; line-height: 1.6; }
+.to-bank__ref blockquote { margin: 8px 0; white-space: pre-wrap; line-height: 1.6; }
 .to-bank__source { margin-left: 8px; }
 </style>

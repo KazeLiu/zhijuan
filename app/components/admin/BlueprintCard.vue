@@ -415,16 +415,17 @@ defineExpose({ refreshJob })
 
 .bp__counts {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 12px;
-  margin-bottom: 14px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
 }
 
 .bp__field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
+.bp__field .el-input-number { width: 100%; }
 
 .bp__field--inline {
   flex-direction: row;
@@ -434,7 +435,7 @@ defineExpose({ refreshJob })
 }
 
 .bp__field--block {
-  margin-top: 14px;
+  margin-top: 16px;
 }
 
 .bp__label {
@@ -443,18 +444,18 @@ defineExpose({ refreshJob })
 }
 
 .bp__row {
-  margin-top: 6px;
+  margin-top: 8px;
 }
 
 .bp__alert {
-  margin-top: 14px;
+  margin-top: 16px;
 }
 
 .bp__actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   margin-top: 16px;
 }
 
@@ -463,7 +464,7 @@ defineExpose({ refreshJob })
 }
 
 .bp__blockers {
-  margin: 6px 0 0;
+  margin: 8px 0 0;
   padding-left: 18px;
   font-size: 14px;
 }
@@ -473,16 +474,16 @@ defineExpose({ refreshJob })
 }
 
 .bp__job {
-  margin-top: 18px;
-  padding-top: 14px;
+  margin-top: 24px;
+  padding-top: 24px;
   border-top: 1px solid var(--zj-border);
 }
 
 .bp__job-head {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 10px;
+  gap: 12px;
+  margin-bottom: 12px;
 }
 
 .bp__job-title {
@@ -494,7 +495,7 @@ defineExpose({ refreshJob })
 }
 
 .bp__job-meta {
-  margin: 10px 0 0;
+  margin: 12px 0 0;
   font-size: 13px;
 }
 
@@ -505,5 +506,8 @@ defineExpose({ refreshJob })
 
 .bp__output {
   margin-top: 16px;
+}
+@media (max-width: 768px) {
+  .bp__counts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 </style>

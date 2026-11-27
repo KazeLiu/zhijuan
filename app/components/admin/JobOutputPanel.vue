@@ -320,7 +320,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   font-size: 13px;
 }
 
@@ -337,16 +337,18 @@ onBeforeUnmount(() => {
 
 .job-output__toolbar {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   margin-bottom: 8px;
+  max-width: 100%;
+  overflow-x: auto;
 }
+.job-output__toolbar > * { flex-shrink: 0; }
 
 .job-output__toggle {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   margin-right: 4px;
 }
 
@@ -363,7 +365,7 @@ onBeforeUnmount(() => {
   min-height: 120px;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 10px 12px;
+  padding: 12px 16px;
   border: 1px solid var(--zj-border);
   border-radius: var(--zj-radius);
   background: var(--zj-bg);

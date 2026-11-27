@@ -107,7 +107,7 @@ function reload(): void {
       @retry="reload"
     />
 
-    <StatePanel v-else-if="pending && !exam" state="loading" title="正在加载场次…" :loading-rows="8" />
+    <StatePanel v-else-if="!exam" state="loading" title="正在加载场次…" :loading-rows="8" />
 
     <template v-else-if="exam">
       <div v-if="isPaused" class="exam-detail__banner">
@@ -154,8 +154,8 @@ function reload(): void {
 </template>
 
 <style scoped>
-.exam-detail > * + * {
-  margin-top: 16px;
+.exam-detail > :not(.page-header) + * {
+  margin-top: var(--zj-section-gap);
 }
 
 .exam-detail__banner {

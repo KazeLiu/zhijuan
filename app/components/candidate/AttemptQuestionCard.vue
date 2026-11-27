@@ -139,22 +139,22 @@ function updateBlank(blankId: string, next: string): void {
 
 <style scoped>
 .q-card {
-  background: #fff;
+  background: var(--zj-surface);
   border: 1px solid var(--zj-border);
   border-radius: var(--zj-radius);
-  padding: clamp(18px, 3vw, 28px);
+  padding: clamp(16px, 3vw, 24px);
 }
 
 .q-card__meta {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   font-size: 14px;
 }
 
 .q-card__position {
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .q-card__score {
@@ -162,10 +162,10 @@ function updateBlank(blankId: string, next: string): void {
 }
 
 .q-card__stem {
-  margin: 16px 0 20px;
-  font-size: clamp(18px, 2.2vw, 21px);
+  margin: 16px 0;
+  font-size: clamp(17px, 2.2vw, 20px);
   line-height: 1.6;
-  font-weight: 600;
+  font-weight: 500;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -190,11 +190,12 @@ function updateBlank(blankId: string, next: string): void {
   font: inherit;
   font-size: 16px;
   color: var(--zj-text);
-  background: #fff;
-  border: 1.5px solid var(--zj-border);
+  background: var(--zj-surface);
+  border: 1px solid var(--zj-border);
   border-radius: var(--zj-radius);
   cursor: pointer;
-  transition: border-color 150ms ease, background-color 150ms ease, transform 150ms ease;
+  transition: border-color 150ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 150ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .q-option:hover:not(:disabled) {
@@ -225,8 +226,8 @@ function updateBlank(blankId: string, next: string): void {
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  border: 1.5px solid currentColor;
-  font-weight: 600;
+  border: 1px solid currentColor;
+  font-weight: 500;
   font-size: 14px;
   color: var(--zj-primary);
 }
@@ -260,9 +261,9 @@ function updateBlank(blankId: string, next: string): void {
 
 .q-blank__label {
   display: block;
-  margin-bottom: 6px;
-  font-size: 15px;
-  font-weight: 600;
+  margin-bottom: 4px;
+  font-size: 14px;
+  font-weight: 500;
 }
 
 .q-blank__score {

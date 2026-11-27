@@ -31,38 +31,49 @@ const props = withDefaults(defineProps<Props>(), {
 .page-header {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end;
+  align-items: center;
   gap: 16px;
-  margin-bottom: 20px;
+  margin-bottom: var(--zj-section-gap);
 }
 
 .page-header__main {
-  flex: 1 1 320px;
+  flex: 1 1 280px;
   min-width: 0;
 }
 
 .page-header__back {
   display: inline-block;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
   font-size: 15px;
   text-decoration: none;
 }
 
 .page-header__title {
   margin: 0;
-  font-size: clamp(22px, 3vw, 28px);
+  font-size: clamp(24px, 3vw, 28px);
   line-height: 1.3;
   color: var(--zj-text);
 }
 
 .page-header__desc {
-  margin: 6px 0 0;
+  margin: 8px 0 0;
   font-size: 15px;
+  max-width: 72ch;
+  overflow-wrap: anywhere;
 }
 
 .page-header__actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+  align-items: center;
+  gap: 12px;
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 4px 0;
+}
+
+.page-header__actions > :deep(*) { flex-shrink: 0; }
+@media (max-width: 768px) {
+  .page-header__main { flex-basis: 100%; }
+  .page-header__actions { width: 100%; }
 }
 </style>

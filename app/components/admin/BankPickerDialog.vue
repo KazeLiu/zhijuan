@@ -50,7 +50,7 @@ function removeConflict() { delete selected.value[props.conflictItemId]; emit('c
     <AdminBankMistakeRange v-model="filters.mistakeTopN" :disabled="busy" />
     <div class="bank-picker__search">
       <el-input v-model="query" placeholder="题干关键词" aria-label="题干关键词" @keyup.enter="search" />
-      <el-select v-model="type" aria-label="题型"><el-option label="全部题型" value="" /><el-option v-for="(label, key) in QUESTION_TYPE_LABELS" :key="key" :label="label" :value="key" /></el-select>
+      <el-select v-model="type" placeholder="全部题型" aria-label="题型"><el-option label="全部题型" value="" /><el-option v-for="(label, key) in QUESTION_TYPE_LABELS" :key="key" :label="label" :value="key" /></el-select>
       <el-button :loading="loading" @click="search">查询 / 刷新</el-button>
     </div>
     <el-alert v-if="error" type="error" :closable="false" :title="error"><el-button v-if="conflictItemId" @click="removeConflict">移除冲突题并刷新</el-button></el-alert>
@@ -68,7 +68,7 @@ function removeConflict() { delete selected.value[props.conflictItemId]; emit('c
         <el-tag v-else-if="sameGroupSelected(row as BankItemSummary)" size="small" type="info">同源考点已选</el-tag>
         <div v-if="row.sourceGroup" class="zj-muted">{{ row.sourceGroup }}</div>
       </template></el-table-column>
-      <el-table-column label="操作" width="90"><template #default="{ row }"><el-button text type="primary" :disabled="busy" @click="preview.id = row.id; preview.open = true">预览</el-button></template></el-table-column>
+      <el-table-column class-name="zj-table-actions" label="操作" width="90"><template #default="{ row }"><el-button text type="primary" :disabled="busy" @click="preview.id = row.id; preview.open = true">预览</el-button></template></el-table-column>
     </el-table>
     <el-pagination :current-page="page" :page-size="20" :total="items?.total ?? 0" layout="prev, pager, next, total" @current-change="page = $event; load()" />
     <p>已选 {{ selectedList.length }} 题 · 本场原有 {{ exam.questions.length }} 题</p>

@@ -141,10 +141,11 @@ function handlePageChange(next: number): void {
 }
 
 .records__title {
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .records__sub {
+  margin-top: 4px;
   font-size: 13px;
 }
 

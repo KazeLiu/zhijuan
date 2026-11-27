@@ -48,7 +48,7 @@ function statusOf(index: number): 'current' | 'answered' | 'unanswered' {
 
 <style scoped>
 .q-nav {
-  background: #fff;
+  background: var(--zj-surface);
   border: 1px solid var(--zj-border);
   border-radius: var(--zj-radius);
   padding: 16px;
@@ -56,8 +56,8 @@ function statusOf(index: number): 'current' | 'answered' | 'unanswered' {
 
 .q-nav__title {
   margin: 0 0 12px;
-  font-size: 15px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 500;
 }
 
 .q-nav__grid {
@@ -69,12 +69,13 @@ function statusOf(index: number): 'current' | 'answered' | 'unanswered' {
 .q-nav__item {
   min-height: 40px;
   font: inherit;
-  font-size: 15px;
+  font-size: 14px;
   border-radius: 8px;
-  border: 1.5px solid var(--zj-border);
-  background: #fff;
+  border: 1px solid var(--zj-border);
+  background: var(--zj-surface);
   cursor: pointer;
-  transition: background-color 150ms ease, border-color 150ms ease;
+  transition: background-color 150ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 150ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .q-nav__item:hover:not(:disabled) {
@@ -84,7 +85,7 @@ function statusOf(index: number): 'current' | 'answered' | 'unanswered' {
 .q-nav__item--current {
   border-color: var(--zj-primary);
   box-shadow: 0 0 0 2px var(--zj-primary-weak);
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .q-nav__item--answered {
@@ -105,8 +106,8 @@ function statusOf(index: number): 'current' | 'answered' | 'unanswered' {
 .q-nav__legend {
   display: flex;
   flex-wrap: wrap;
-  gap: 14px;
-  margin: 14px 0 0;
+  gap: 12px;
+  margin: 12px 0 0;
   padding: 0;
   list-style: none;
   font-size: 13px;
@@ -116,14 +117,14 @@ function statusOf(index: number): 'current' | 'answered' | 'unanswered' {
 .q-nav__legend li {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 .q-nav__dot {
   width: 12px;
   height: 12px;
   border-radius: 4px;
-  border: 1.5px solid var(--zj-border);
+  border: 1px solid var(--zj-border);
   display: inline-block;
 }
 
@@ -138,6 +139,6 @@ function statusOf(index: number): 'current' | 'answered' | 'unanswered' {
 }
 
 .q-nav__dot--unanswered {
-  background: #fff;
+  background: var(--zj-surface);
 }
 </style>

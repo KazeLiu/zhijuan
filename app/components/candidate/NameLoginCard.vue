@@ -95,18 +95,18 @@ onMounted(() => {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  font-weight: 600;
-  font-size: 17px;
+  font-weight: 500;
+  font-size: 16px;
 }
 
 .login-card__intro {
-  margin: 0 0 18px;
+  margin: 0 0 16px;
   color: var(--zj-text-muted);
-  font-size: 15px;
+  font-size: 14px;
 }
 
 .login-card__error {
-  margin-bottom: 14px;
+  margin-bottom: 12px;
 }
 
 .login-card__submit {

@@ -41,7 +41,7 @@ function examTimeZoneFallback(): string {
       @retry="refresh()"
     />
 
-    <StatePanel v-else-if="pending && !data" state="loading" title="正在加载概览…" :loading-rows="5" />
+    <StatePanel v-else-if="!data" state="loading" title="正在加载概览…" :loading-rows="5" />
 
     <template v-else-if="data">
       <div class="overview__stats">
@@ -134,13 +134,13 @@ function examTimeZoneFallback(): string {
 <style scoped>
 .overview__stats {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 14px;
-  margin-bottom: 18px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: var(--zj-section-gap);
 }
 
 .overview__stat :deep(.el-card__body) {
-  padding: 16px 18px;
+  padding: 20px;
 }
 
 .overview__stat-label {
@@ -149,9 +149,9 @@ function examTimeZoneFallback(): string {
 }
 
 .overview__stat-value {
-  margin: 6px 0 4px;
-  font-size: 30px;
-  font-weight: 700;
+  margin: 8px 0;
+  font-size: 32px;
+  font-weight: 500;
   line-height: 1.1;
 }
 
@@ -168,7 +168,7 @@ function examTimeZoneFallback(): string {
 }
 
 .overview__card {
-  margin-bottom: 16px;
+  margin-bottom: var(--zj-section-gap);
 }
 
 .overview__card-head {
@@ -220,13 +220,18 @@ function examTimeZoneFallback(): string {
 
 .overview__exam-actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+  gap: 12px;
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 .overview__empty-hint {
   margin: 0;
   font-size: 14px;
   max-width: 520px;
+}
+@media (max-width: 600px) {
+  .overview__stats { grid-template-columns: 1fr; }
+  .overview__stat :deep(.el-card__body) { padding: 16px; }
 }
 </style>

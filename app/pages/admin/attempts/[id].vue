@@ -432,8 +432,11 @@ async function submitGrade() {
 .zj-attempt-admin {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--zj-section-gap);
 }
+.zj-attempt-admin > .page-header { margin-bottom: 0; }
+.zj-attempt-admin__summary { min-width: 0; }
+.zj-attempt-admin__summary :deep(.el-descriptions__table) { min-width: 680px; }
 
 .zj-attempt-admin__alert {
   margin-bottom: 4px;
@@ -530,18 +533,18 @@ async function submitGrade() {
 }
 
 .zj-attempt-admin__answers dd {
-  margin: 2px 0 0;
+  margin: 4px 0 0;
   word-break: break-word;
 }
 
 .zj-attempt-admin__grade-stem p {
-  margin: 6px 0 0;
+  margin: 8px 0 0;
   white-space: pre-wrap;
   word-break: break-word;
 }
 
 .zj-attempt-admin__hint {
-  margin: 6px 0 0;
+  margin: 8px 0 0;
   font-size: 14px;
 }
 </style>

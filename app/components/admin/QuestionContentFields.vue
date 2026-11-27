@@ -88,6 +88,7 @@ function removeBlank(index: number) {
 .content-fields__option, .content-fields__blank-head { display: flex; align-items: center; gap: 12px; }
 .content-fields__blank-head { justify-content: space-between; }
 .content-fields__option .el-input { flex: 1; min-width: 0; }
+.content-fields__option .el-radio, .content-fields__option .el-checkbox { flex-shrink: 0; margin-right: 0; }
 .content-fields__blank { padding: 12px; border: 1px solid var(--zj-border); border-radius: var(--zj-radius); }
-.content-fields__hint { margin: 6px 0 0; line-height: 1.6; }
+.content-fields__hint { margin: 8px 0 0; line-height: 1.6; }
 </style>

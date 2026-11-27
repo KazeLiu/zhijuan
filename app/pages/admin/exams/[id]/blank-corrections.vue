@@ -267,7 +267,7 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', guardUnload))
       @retry="reloadPreservingSelection"
     />
 
-    <StatePanel v-else-if="pending && !data" state="loading" title="正在统计判错写法…" :loading-rows="5" />
+    <StatePanel v-else-if="!data" state="loading" title="正在统计判错写法…" :loading-rows="5" />
 
     <template v-else-if="data">
       <el-alert v-if="!data.canCorrect" type="warning" :closable="false" show-icon :title="data.lockReason" class="bc__alert" />
@@ -481,12 +481,11 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', guardUnload))
 
 <style scoped>
 .bc {
-  max-width: 1100px;
-  margin: 0 auto;
+  width: 100%;
 }
 
-.bc > * + * {
-  margin-top: 16px;
+.bc > :not(.page-header) + * {
+  margin-top: var(--zj-section-gap);
 }
 
 .bc__alert {
@@ -496,7 +495,7 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', guardUnload))
 .bc__question-head {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 12px;
   align-items: baseline;
 }
 
@@ -507,15 +506,15 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', guardUnload))
 }
 
 .bc__blank + .bc__blank {
-  margin-top: 18px;
-  padding-top: 14px;
+  margin-top: 24px;
+  padding-top: 16px;
   border-top: 1px dashed var(--zj-border);
 }
 
 .bc__blank-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 12px;
   align-items: baseline;
   margin: 0 0 8px;
 }
@@ -527,7 +526,7 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', guardUnload))
 .bc__groups {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
 .bc__group {
@@ -542,11 +541,11 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', guardUnload))
 }
 
 .bc__group-people {
-  margin-left: 10px;
+  margin-left: 12px;
 }
 
 .bc__group-spellings {
-  margin-left: 10px;
+  margin-left: 12px;
   border-bottom: 1px dotted var(--zj-border);
 }
 
@@ -584,23 +583,23 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', guardUnload))
 
 .bc__actions {
   display: flex;
-  gap: 10px;
+  gap: 12px;
   margin-top: 16px;
 }
 
 .bc__conflict {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 12px;
   align-items: center;
 }
 
 .bc__history-reason {
-  margin: 0 0 6px;
+  margin: 0 0 8px;
 }
 
 .bc__history-table {
-  margin-top: 10px;
+  margin-top: 12px;
 }
 
 @media (max-width: 640px) {

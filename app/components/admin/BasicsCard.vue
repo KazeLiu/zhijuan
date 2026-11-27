@@ -251,13 +251,14 @@ function reset(): void {
 
 .basics__grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px;
 }
 
 .basics__control {
   width: 100%;
 }
+.basics__grid :deep(.el-date-editor.el-input) { width: 100%; }
 
 .basics__preview {
   margin: 0 0 12px;
@@ -268,11 +269,14 @@ function reset(): void {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   margin-top: 8px;
 }
 
 .basics__dirty {
   font-size: 13px;
+}
+@media (max-width: 1100px) {
+  .basics__grid { grid-template-columns: 1fr; gap: 0; }
 }
 </style>

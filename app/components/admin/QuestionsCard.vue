@@ -521,13 +521,13 @@ function imported() { importOpen.value = false; selectedIds.value = []; imported
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 12px;
 }
 
 .qs__title {
   font-size: 17px;
   font-weight: 600;
-  margin-right: 10px;
+  margin-right: 12px;
 }
 
 .qs__meta {
@@ -536,9 +536,13 @@ function imported() { importOpen.value = false; selectedIds.value = []; imported
 
 .qs__actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  align-items: center;
+  gap: 12px;
+  max-width: 100%;
+  overflow-x: auto;
 }
+.qs__actions > * { flex-shrink: 0; }
+.qs__select-all .el-checkbox { margin-right: 0; }
 
 .qs__alert {
   margin-bottom: 12px;
@@ -559,9 +563,9 @@ function imported() { importOpen.value = false; selectedIds.value = []; imported
 .qs__item {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 12px;
   justify-content: space-between;
-  padding: 14px 0;
+  padding: 16px 0;
   border-bottom: 1px solid var(--zj-border);
 }
 
@@ -578,11 +582,11 @@ function imported() { importOpen.value = false; selectedIds.value = []; imported
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 .qs__index {
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .qs__score {
@@ -603,22 +607,23 @@ function imported() { importOpen.value = false; selectedIds.value = []; imported
 
 .qs__item-actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 2px;
-  align-items: flex-start;
+  gap: 8px;
+  align-items: center;
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 .qs__refs {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   width: 100%;
 }
 
 .qs__ref {
   border: 1px solid var(--zj-border);
   border-radius: var(--zj-radius);
-  padding: 10px 12px;
+  padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 8px;

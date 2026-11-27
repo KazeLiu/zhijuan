@@ -109,7 +109,7 @@ watch(() => route.fullPath, () => {
     </div>
 
     <el-drawer v-model="drawerOpen" title="管理菜单" direction="ltr" size="240px">
-      <el-menu :default-active="activePath" router @select="closeDrawer">
+      <el-menu :default-active="activePath" router class="admin-menu" @select="closeDrawer">
         <el-menu-item v-for="item in navItems" :key="item.path" :index="item.path">
           {{ item.label }}
         </el-menu-item>
@@ -130,11 +130,11 @@ watch(() => route.fullPath, () => {
 .admin-sidebar {
   display: flex;
   flex-direction: column;
-  width: 220px;
-  flex: 0 0 220px;
+  width: 240px;
+  flex: 0 0 240px;
   background: #fff;
   border-right: 1px solid var(--zj-border);
-  padding: 18px 12px;
+  padding: 24px 16px;
   position: sticky;
   top: 0;
   height: 100vh;
@@ -149,7 +149,7 @@ watch(() => route.fullPath, () => {
 
 .admin-brand__link {
   font-size: 20px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--zj-primary);
   text-decoration: none;
   letter-spacing: 0.04em;
@@ -163,7 +163,12 @@ watch(() => route.fullPath, () => {
 .admin-menu {
   border-right: none;
   flex: 1;
+  --el-menu-item-height: 40px;
+  --el-menu-base-level-padding: 16px;
 }
+
+.admin-menu :deep(.el-menu-item) { margin-bottom: 4px; border-radius: 8px; }
+.admin-menu :deep(.el-menu-item.is-active) { background: var(--zj-primary-weak); font-weight: 500; }
 
 .admin-sidebar__foot {
   font-size: 12px;
@@ -181,10 +186,10 @@ watch(() => route.fullPath, () => {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 10px clamp(16px, 3vw, 32px);
+  padding: 12px var(--zj-page-padding);
   background: #fff;
   border-bottom: 1px solid var(--zj-border);
-  min-height: 56px;
+  min-height: 64px;
 }
 
 .admin-topbar__burger {
@@ -203,18 +208,20 @@ watch(() => route.fullPath, () => {
 }
 
 .admin-role-alert {
-  margin: 16px clamp(16px, 3vw, 32px) 0;
+  margin: 16px var(--zj-page-padding) 0;
 }
 
 .admin-role-alert__body {
-  margin: 6px 0 10px;
+  margin: 8px 0 12px;
   font-size: 14px;
 }
 
 .admin-main {
   flex: 1;
   width: 100%;
-  padding: clamp(16px, 3vw, 32px);
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: var(--zj-page-padding);
 }
 
 @media (max-width: 900px) {

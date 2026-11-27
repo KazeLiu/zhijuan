@@ -180,8 +180,11 @@ async function generate(resume = false) {
 .bank-generate__job { margin-top: 16px; }
 .bank-generate__issues { margin-top: 16px; }
 .bank-generate__sources { max-height: 360px; overflow: auto; }
-.bank-generate__quantity { display: flex; align-items: center; gap: 8px; margin-left: 16px; }
+.bank-generate__quantity { display: flex; align-items: center; gap: 8px; width: 100%; margin-top: 12px; }
 .bank-generate__counts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 24px; width: 100%; margin-top: 12px; }
 .bank-generate__counts label { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .bank-generate__group { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; }
+@media (max-width: 600px) {
+  .bank-generate__counts { grid-template-columns: 1fr; }
+}
 </style>

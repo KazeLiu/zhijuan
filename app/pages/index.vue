@@ -209,7 +209,7 @@ async function enterExam(item: AvailableExamItem): Promise<void> {
         />
 
         <StatePanel
-          v-else-if="availablePending && !available"
+          v-else-if="!available"
           state="loading"
           title="正在获取考试列表…"
           :loading-rows="3"
@@ -299,32 +299,32 @@ async function enterExam(item: AvailableExamItem): Promise<void> {
 
 .entry__head {
   text-align: center;
-  margin-bottom: 24px;
+  margin-bottom: var(--zj-section-gap);
 }
 
 .entry__title {
   margin: 0;
   font-size: clamp(28px, 5vw, 36px);
-  letter-spacing: 0.08em;
+  letter-spacing: 0.04em;
   color: var(--zj-primary);
 }
 
 .entry__subtitle {
-  margin: 6px 0 0;
-  font-size: 15px;
+  margin: 8px 0 0;
+  font-size: 14px;
 }
 
 .entry__card {
-  margin-bottom: 16px;
+  margin-bottom: var(--zj-section-gap);
 }
 
 .entry__alert {
-  margin-bottom: 16px;
+  margin-bottom: var(--zj-section-gap);
 }
 
 .entry__alert-body {
-  margin: 6px 0 10px;
-  font-size: 15px;
+  margin: 8px 0 12px;
+  font-size: 14px;
 }
 
 .entry__identity {
@@ -332,14 +332,14 @@ async function enterExam(item: AvailableExamItem): Promise<void> {
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 12px;
   font-size: 16px;
 }
 
 .entry__identity-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 .entry__list-head {
@@ -347,12 +347,12 @@ async function enterExam(item: AvailableExamItem): Promise<void> {
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 12px;
 }
 
 .entry__list-title {
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .entry__exams {
@@ -370,9 +370,9 @@ async function enterExam(item: AvailableExamItem): Promise<void> {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 14px 16px;
+  padding: 16px;
   border: 1px solid var(--zj-border);
-  border-radius: 8px;
+  border-radius: var(--zj-radius);
 }
 
 .entry__exam.is-upcoming {
@@ -388,22 +388,23 @@ async function enterExam(item: AvailableExamItem): Promise<void> {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .entry__exam-title {
   margin: 0;
-  font-size: 17px;
+  font-size: 16px;
+  font-weight: 500;
 }
 
 .entry__exam-tags {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 .entry__exam-meta {
-  margin: 6px 0 0;
+  margin: 8px 0 0;
   font-size: 14px;
 }
 
@@ -416,22 +417,12 @@ async function enterExam(item: AvailableExamItem): Promise<void> {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
-}
-
-.entry__panel-title {
-  margin: 0 0 8px;
-  font-size: 20px;
-}
-
-.entry__panel-meta {
-  margin: 0 0 10px;
-  font-size: 15px;
+  gap: 12px;
 }
 
 .entry__panel-text {
-  margin: 0 0 14px;
-  font-size: 16px;
+  margin: 0 0 16px;
+  font-size: 15px;
 }
 
 .entry__actions {
@@ -450,7 +441,7 @@ async function enterExam(item: AvailableExamItem): Promise<void> {
 }
 
 .entry__foot {
-  margin-top: 18px;
+  margin-top: 16px;
   text-align: center;
   font-size: 14px;
 }

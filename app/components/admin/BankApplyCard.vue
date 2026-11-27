@@ -86,10 +86,11 @@ function openPicker() { error.value = ''; conflictItemId.value = ''; manualVersi
   </section>
 </template>
 <style scoped>
-.bank-apply { margin: 20px 0; padding-top: 16px; border-top: 1px solid var(--zj-border); }
+.bank-apply { margin: 24px 0; padding-top: 24px; border-top: 1px solid var(--zj-border); }
 .bank-apply h3 { font-size: 17px; margin: 0 0 16px; }
 .bank-apply .el-table { margin: 12px 0; }
-.bank-apply__actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; align-items: center; }
+.bank-apply__actions { display: flex; gap: 12px; margin-top: 16px; align-items: center; max-width: 100%; overflow-x: auto; }
+.bank-apply__actions > * { flex-shrink: 0; }
 .bank-apply__actions .el-button { margin-left: 0; }
 .bank-apply__short { color: var(--zj-danger); }
 </style>

@@ -135,8 +135,10 @@ function handlePageChange(next: number): void {
           <el-option label="草稿" value="draft" />
           <el-option label="已发布" value="published" />
         </el-select>
-        <el-button type="primary" plain @click="applyFilters">查询</el-button>
-        <el-button text @click="resetFilters">重置</el-button>
+        <div class="zj-actions">
+          <el-button type="primary" plain @click="applyFilters">查询</el-button>
+          <el-button text @click="resetFilters">重置</el-button>
+        </div>
       </div>
     </el-card>
 
@@ -150,7 +152,7 @@ function handlePageChange(next: number): void {
       @retry="refresh()"
     />
 
-    <StatePanel v-else-if="pending && !data" state="loading" :loading-rows="6" />
+    <StatePanel v-else-if="!data" state="loading" :loading-rows="6" />
 
     <StatePanel
       v-else-if="rows.length === 0"
@@ -196,13 +198,13 @@ function handlePageChange(next: number): void {
           </template>
         </el-table-column>
 
-        <el-table-column label="更新时间" width="170">
+        <el-table-column label="更新时间" width="190">
           <template #default="{ row }">
             <span class="zj-tabular zj-muted">{{ formatDateTimeSeconds(row.updatedAt, row.timeZone) }}</span>
           </template>
         </el-table-column>
 
-        <el-table-column label="操作" width="190" align="right">
+        <el-table-column class-name="zj-table-actions" label="操作" width="190" align="right">
           <template #default="{ row }">
             <el-button link type="primary" @click.stop="openRow(row)">
               {{ rowActionLabel((row as ExamListRowDTO).phase) }}
@@ -263,18 +265,18 @@ function handlePageChange(next: number): void {
 }
 
 .exams__filter-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: minmax(160px, 320px) 180px max-content;
+  gap: 12px;
   align-items: center;
 }
 
 .exams__keyword {
-  max-width: 260px;
+  min-width: 0;
 }
 
 .exams__status {
-  width: 160px;
+  width: 100%;
 }
 
 .exams__table {
@@ -300,7 +302,11 @@ function handlePageChange(next: number): void {
 }
 
 .exams__hint {
-  margin: 6px 0 0;
+  margin: 8px 0 0;
   font-size: 13px;
+}
+@media (max-width: 768px) {
+  .exams__filter-row { grid-template-columns: minmax(0, 1fr) max-content; }
+  .exams__keyword { grid-column: 1 / -1; }
 }
 </style>

@@ -134,7 +134,7 @@ const query = computed<ResultsQuery>(() => ({
       @retry="refresh()"
     />
 
-    <StatePanel v-else-if="pending && !data" state="loading" title="正在统计数据…" :loading-rows="6" />
+    <StatePanel v-else-if="!data" state="loading" title="正在统计数据…" :loading-rows="6" />
 
     <template v-else-if="data && summary">
       <el-alert v-if="exportError" type="error" :closable="false" show-icon :title="exportError" class="results__alert" />
@@ -199,8 +199,10 @@ const query = computed<ResultsQuery>(() => ({
             <el-option label="仅看人工复核" value="true" />
             <el-option label="未复核" value="false" />
           </el-select>
-          <el-button type="primary" plain @click="applyFilters">查询</el-button>
-          <el-button text @click="resetFilters">重置</el-button>
+          <div class="zj-actions">
+            <el-button type="primary" plain @click="applyFilters">查询</el-button>
+            <el-button text @click="resetFilters">重置</el-button>
+          </div>
         </div>
       </el-card>
 
@@ -224,12 +226,12 @@ const query = computed<ResultsQuery>(() => ({
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="开始时间" width="170">
+            <el-table-column label="开始时间" width="190">
               <template #default="{ row }">
                 <span class="zj-tabular">{{ formatDateTimeSeconds(row.startedAt, timeZone) }}</span>
               </template>
             </el-table-column>
-            <el-table-column label="交卷时间" width="170">
+            <el-table-column label="交卷时间" width="190">
               <template #default="{ row }">
                 <span class="zj-tabular">{{ row.submittedAt ? formatDateTimeSeconds(row.submittedAt, timeZone) : '—' }}</span>
               </template>
@@ -258,7 +260,7 @@ const query = computed<ResultsQuery>(() => ({
                 <span v-else class="zj-muted">—</span>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="120" align="right">
+            <el-table-column class-name="zj-table-actions" label="操作" width="120" align="right">
               <template #default="{ row }">
                 <el-button link type="primary" @click.stop="openAttempt(row)">查看答卷</el-button>
               </template>
@@ -340,12 +342,12 @@ const query = computed<ResultsQuery>(() => ({
 
 .results__stats {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
 }
 
 .results__stat :deep(.el-card__body) {
-  padding: 14px 16px;
+  padding: 16px;
 }
 
 .results__stat-label {
@@ -354,9 +356,9 @@ const query = computed<ResultsQuery>(() => ({
 }
 
 .results__stat-value {
-  margin: 4px 0 2px;
-  font-size: 26px;
-  font-weight: 700;
+  margin: 8px 0 4px;
+  font-size: 28px;
+  font-weight: 500;
   line-height: 1.15;
 }
 
@@ -366,7 +368,7 @@ const query = computed<ResultsQuery>(() => ({
 }
 
 .results__caption {
-  margin: 10px 0 16px;
+  margin: 12px 0 24px;
   font-size: 13px;
 }
 
@@ -375,22 +377,22 @@ const query = computed<ResultsQuery>(() => ({
 }
 
 .results__filter-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) repeat(2, minmax(140px, 180px)) max-content;
+  gap: 12px;
   align-items: center;
 }
 
 .results__name {
-  max-width: 220px;
+  min-width: 0;
 }
 
 .results__select {
-  width: 160px;
+  width: 100%;
 }
 
 .results__table-card {
-  margin-bottom: 16px;
+  margin-bottom: var(--zj-section-gap);
 }
 
 .results__card-head {
@@ -405,7 +407,7 @@ const query = computed<ResultsQuery>(() => ({
 .results__pager {
   display: flex;
   justify-content: flex-end;
-  margin-top: 14px;
+  margin-top: 16px;
 }
 
 .results__stem {
@@ -418,5 +420,13 @@ const query = computed<ResultsQuery>(() => ({
 
 .results__foot {
   font-size: 13px;
+}
+@media (max-width: 1100px) {
+  .results__filter-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .results__filter-row .zj-actions { justify-content: flex-end; }
+}
+@media (max-width: 768px) {
+  .results__stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .results__name, .results__filter-row .zj-actions { grid-column: 1 / -1; }
 }
 </style>

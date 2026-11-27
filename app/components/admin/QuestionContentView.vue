@@ -71,11 +71,11 @@ function isCorrectOption(optionId: string): boolean {
 
 <style scoped>
 .question-view { line-height: 1.7; overflow-wrap: anywhere; }
-.question-view p { white-space: pre-wrap; margin: 10px 0; }
+.question-view p { white-space: pre-wrap; margin: 12px 0; }
 .question-view__head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .question-view__stem { font-size: 17px; font-weight: 600; }
-.question-view ul { padding-left: 22px; margin: 0; }
-.question-view__options li { padding: 2px 6px; border-radius: 4px; }
+.question-view ul { padding-left: 24px; margin: 0; }
+.question-view__options li { padding: 4px 8px; border-radius: 4px; }
 .question-view__options li.is-correct { background: var(--el-color-success-light-9); }
 .question-view__mark { margin-left: 8px; }
 .question-view__blanks li { list-style: none; }

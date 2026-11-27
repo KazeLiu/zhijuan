@@ -11,7 +11,7 @@ function update(patch: Partial<BankFilters>) { emit('update:modelValue', { ...pr
       @update:model-value="update({ knowledgePoints: $event })">
       <el-option v-for="point in knowledgePoints" :key="point" :label="point" :value="point" />
     </el-select>
-    <el-select :model-value="modelValue.difficulty ?? ''" aria-label="难度筛选" @update:model-value="update({ difficulty: $event || undefined })">
+    <el-select :model-value="modelValue.difficulty ?? ''" placeholder="全部难度" aria-label="难度筛选" @update:model-value="update({ difficulty: $event || undefined })">
       <el-option label="全部难度" value="" /><el-option v-for="(label, difficulty) in DIFFICULTY_LABELS" :key="difficulty" :label="label" :value="difficulty" />
     </el-select>
     <el-select :model-value="modelValue.libraryFileIds ?? []" multiple filterable collapse-tags collapse-tags-tooltip placeholder="全部来源资料" aria-label="来源资料筛选"
@@ -21,6 +21,6 @@ function update(patch: Partial<BankFilters>) { emit('update:modelValue', { ...pr
   </div>
 </template>
 <style scoped>
-.bank-filters { display: grid; grid-template-columns: 1.3fr 1fr 1.5fr; gap: 12px; }
+.bank-filters { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1.5fr); gap: 12px; }
 @media(max-width: 650px) { .bank-filters { grid-template-columns: 1fr; } }
 </style>

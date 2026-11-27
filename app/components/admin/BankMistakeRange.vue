@@ -16,7 +16,9 @@ defineProps<{ disabled?: boolean }>()
 </template>
 
 <style scoped>
-.bank-mistake-range { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.bank-mistake-range { display: flex; align-items: center; gap: 12px; margin-top: 16px; font-size: 14px; }
+.bank-mistake-range .el-input-number { width: 128px; }
+.bank-mistake-range > span { white-space: nowrap; }
 .bank-mistake-range .el-checkbox { margin-right: 0; }
 @media(max-width: 650px) { .bank-mistake-range { flex-wrap: wrap; } }
 </style>

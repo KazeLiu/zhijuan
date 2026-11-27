@@ -299,7 +299,7 @@ async function removeExam(): Promise<void> {
 
 .pub__checklist li {
   display: flex;
-  gap: 10px;
+  gap: 12px;
   padding: 8px 0;
   border-bottom: 1px dashed var(--zj-border);
   font-size: 15px;
@@ -311,7 +311,7 @@ async function removeExam(): Promise<void> {
 
 .pub__check-icon {
   color: var(--zj-primary);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .pub__check--fail .pub__check-icon {
@@ -343,6 +343,6 @@ async function removeExam(): Promise<void> {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 </style>

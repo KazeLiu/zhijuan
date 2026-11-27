@@ -161,7 +161,7 @@ async function refreshModels(): Promise<void> {
 
 <template>
   <section class="settings">
-    <PageHeader title="模型设置" description="AI 出题使用 OpenAI 兼容的 /chat/completions 接口；填 Base URL 与模型即可，API Key 可选（内网无鉴权的模型端点留空），Key 只保存在服务端。可设置思考强度。">
+    <PageHeader title="模型设置">
       <template #actions>
         <el-button :loading="pending" :disabled="saving || connectionTest.running" @click="refresh()">重新读取</el-button>
       </template>
@@ -177,7 +177,7 @@ async function refreshModels(): Promise<void> {
       @retry="refresh()"
     />
 
-    <StatePanel v-else-if="pending && !data" state="loading" title="正在读取设置…" :loading-rows="6" />
+    <StatePanel v-else-if="!data" state="loading" title="正在读取设置…" :loading-rows="6" />
 
     <el-card v-else-if="data" shadow="never" class="settings__card">
       <el-form label-position="top" class="settings__form" :disabled="saving || refreshingModels || connectionTest.running" @submit.prevent="save">
@@ -259,12 +259,12 @@ async function refreshModels(): Promise<void> {
 
 <style scoped>
 .settings__card {
-  max-width: 760px;
+  max-width: 960px;
 }
 
 .settings__hint {
-  margin: 6px 0 0;
-  font-size: 13px;
+  margin: 8px 0 0;
+  font-size: 14px;
 }
 
 .settings__key-row {
@@ -281,14 +281,13 @@ async function refreshModels(): Promise<void> {
 
 .settings__model-row {
   display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+  gap: 12px;
   width: 100%;
 }
 
 .settings__model-select {
   flex: 1 1 240px;
-  min-width: 200px;
+  min-width: 0;
 }
 
 .settings__alert {
@@ -302,7 +301,7 @@ async function refreshModels(): Promise<void> {
 
 .settings__note {
   margin: 12px 0 0;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.6;
 }
 

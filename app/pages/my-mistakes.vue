@@ -61,7 +61,7 @@ async function reload(): Promise<void> {
           aria-label="题干关键词"
           @keyup.enter="search"
         />
-        <el-select v-model="filters.type" aria-label="题型筛选">
+        <el-select v-model="filters.type" placeholder="全部题型" aria-label="题型筛选">
           <el-option label="全部题型" value="" />
           <el-option v-for="(label, type) in QUESTION_TYPE_LABELS" :key="type" :label="label" :value="type" />
         </el-select>
@@ -158,7 +158,7 @@ async function reload(): Promise<void> {
 
 .mistakes__row {
   display: grid;
-  grid-template-columns: 1.3fr 1fr;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
   gap: 12px;
   margin-bottom: 12px;
 }
@@ -176,7 +176,7 @@ async function reload(): Promise<void> {
 }
 
 .mk {
-  padding: 14px 16px;
+  padding: 16px;
   border: 1px solid var(--zj-border);
   border-left: 3px solid var(--zj-danger);
   border-radius: var(--zj-radius);
@@ -184,7 +184,7 @@ async function reload(): Promise<void> {
 }
 
 .mk + .mk {
-  margin-top: 10px;
+  margin-top: 12px;
 }
 
 .mk__head {
@@ -195,7 +195,7 @@ async function reload(): Promise<void> {
 }
 
 .mk__exam {
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .mk__time,
@@ -205,29 +205,31 @@ async function reload(): Promise<void> {
 
 .mk__score {
   margin-left: auto;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .mk__stem {
-  margin: 10px 0 8px;
+  margin: 12px 0 8px;
   line-height: 1.7;
 }
 
 .mk__options {
   margin: 0 0 8px;
-  padding-left: 18px;
-  line-height: 1.8;
+  padding-left: 24px;
+  line-height: 1.7;
   color: var(--zj-text-muted);
 }
 
 .mk__rows {
   margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .mk__row {
   display: flex;
   gap: 12px;
-  padding: 6px 0;
 }
 
 .mk__row dt {
@@ -238,6 +240,8 @@ async function reload(): Promise<void> {
 .mk__row dd {
   margin: 0;
   flex: 1 1 auto;
+  min-width: 0;
+  word-break: break-word;
 }
 
 .mk__unanswered {
@@ -250,12 +254,12 @@ async function reload(): Promise<void> {
 
 .mk__link {
   display: inline-block;
-  margin-top: 8px;
+  margin-top: 12px;
   color: var(--zj-primary);
   font-size: 13px;
 }
 
-@media (max-width: 650px) {
+@media (max-width: 768px) {
   .mistakes__row {
     grid-template-columns: 1fr;
   }
@@ -264,5 +268,7 @@ async function reload(): Promise<void> {
     flex-direction: column;
     gap: 4px;
   }
+
+  .mk__row dt { flex-basis: auto; }
 }
 </style>

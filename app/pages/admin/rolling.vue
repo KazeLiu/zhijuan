@@ -155,7 +155,7 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
         <el-table :data="data.recent" row-key="date">
           <el-table-column prop="date" label="日期" width="140" />
           <el-table-column label="结果" min-width="200"><template #default="{ row }"><span v-if="row.status === 'failed'" class="rolling-page__short">{{ row.errorMessage }}</span><span v-else>{{ row.examId ? '已发布' : '场次已删除' }}</span></template></el-table-column>
-          <el-table-column label="操作" width="100" align="right"><template #default="{ row }"><NuxtLink v-if="row.examId" :to="`/admin/exams/${row.examId}`"><el-button link type="primary">查看试卷</el-button></NuxtLink></template></el-table-column>
+          <el-table-column class-name="zj-table-actions" label="操作" width="100" align="right"><template #default="{ row }"><NuxtLink v-if="row.examId" :to="`/admin/exams/${row.examId}`"><el-button link type="primary">查看试卷</el-button></NuxtLink></template></el-table-column>
         </el-table>
       </el-card>
       <p class="zj-muted">每天按所选时区生成独立场次；修改规则只影响后续生成，暂停不影响已有试卷。自动生成需要服务持续运行。</p>
@@ -164,16 +164,19 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 </template>
 
 <style scoped>
-.rolling-page > * + * { margin-top: 16px; }
+.rolling-page > :not(.page-header) + * { margin-top: var(--zj-section-gap); }
 .rolling-page__card-head, .rolling-page__status, .rolling-page__actions { display: flex; align-items: center; gap: 16px; }
-.rolling-page__card-head { justify-content: space-between; }
+.rolling-page__card-head { justify-content: space-between; flex-wrap: wrap; }
 .rolling-page__status { justify-content: space-between; flex-wrap: wrap; }
-.rolling-page__value { margin-top: 6px; font-size: 17px; font-weight: 600; }
-.rolling-page__window { display: grid; grid-template-columns: minmax(220px, 2fr) 1fr 1fr; gap: 20px; }
+.rolling-page__value { margin-top: 8px; font-size: 18px; font-weight: 500; }
+.rolling-page__window { display: grid; grid-template-columns: minmax(0, 2fr) repeat(2, minmax(0, 1fr)); gap: 24px; }
 .rolling-page__window .el-select { width: 100%; }
-.rolling-page__counts { display: grid; grid-template-columns: repeat(4, minmax(140px, 1fr)); gap: 16px; }
+.rolling-page__counts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+.rolling-page__counts .el-input-number { width: 100%; }
 .rolling-page__table, .rolling-page__notice { margin: 16px 0; }
 .rolling-page__actions .el-button { margin-left: 0; }
+.rolling-page__actions { max-width: 100%; overflow-x: auto; gap: 12px; }
+.rolling-page__actions > * { flex-shrink: 0; }
 .rolling-page__short { color: var(--zj-danger); }
 @media(max-width: 760px) { .rolling-page__counts { grid-template-columns: repeat(2, 1fr); } .rolling-page__window { grid-template-columns: 1fr; gap: 0; } .rolling-page__card-head { flex-wrap: wrap; } }
 </style>

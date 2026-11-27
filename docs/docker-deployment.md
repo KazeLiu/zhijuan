@@ -137,6 +137,8 @@ docker compose logs --tail=100 zhijuan
 
 迁移 `008-bank-direct-activation` 取消题库审核，将旧的待审核题直接启用，主动停用的题目保持停用。新建、入库和编辑已启用题后均可直接组卷。
 
+迁移 `012-blank-corrections` 新增填空答案纠错记录表，不会自动改写历史成绩。新判分统一忽略填空答案大小写并去除两端空白；已交卷历史成绩如需按新规则更新，在场次的「填空答案纠错」中预览影响并确认，已有人工复核分会保留。升级前仍需完整备份数据卷。
+
 ## 把原生 Node 部署的数据搬进 Docker
 
 先完成应用镜像的构建或离线加载。停止原 Node 服务，备份原配置 `NUXT_DATA_DIR` 指向的**整个数据目录**。以下示例假设备份已放在 `../zhijuan-original-data`，其内部直接包含 `db` 与 `uploads`。
@@ -212,4 +214,4 @@ server {
 - [Ubuntu 安装 Docker Engine](https://docs.docker.com/engine/install/ubuntu/)：Ubuntu 24.04 支持与发布端口的防火墙限制。
 - [Docker 镜像加载](https://docs.docker.com/reference/cli/docker/image/load/)与 [Buildx 平台构建](https://docs.docker.com/reference/cli/docker/buildx/build/)：离线导入与目标 CPU 架构。
 
-构建状态：2026-11-26 已生成 `dist/zhijuan-offline-0.1.0-20261126-linux-amd64.tar.gz`（78.04 MiB），镜像标签为 `zhijuan:0.1.0-20261126-b85bbfa-worktree`。使用当前工作区构建，包含至迁移 011、定向补题、滚动出题、模型连接测试，以及题库生成自动重试、失败后继续和结束问题列表；本次不增加数据库迁移。在 Ubuntu 22.04 x86_64 构建机完成 `linux/amd64` 生产构建、镜像导出及离线 Compose 配置校验，离线包已下载到本地并核对文件清单，未启动应用容器。包内含镜像、离线 Compose、可选环境模板、部署说明和构建信息；部署时在目标环境确认健康检查和内网模型的实际重试效果。
+离线包的镜像标签、源码基线、包含的工作区改动和迁移版本以同包 `BUILD-INFO.txt` 为准。加载时使用包内 `compose.yaml` 的镜像标签；更新现有部署时只合并镜像标签与必要配置，保留原 `.env`、Compose 项目名和数据卷。

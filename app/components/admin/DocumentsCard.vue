@@ -285,13 +285,13 @@ function nextPage(): void {
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 12px;
 }
 
 .docs__title {
   font-size: 17px;
   font-weight: 600;
-  margin-right: 10px;
+  margin-right: 12px;
 }
 
 .docs__meta {
@@ -301,6 +301,8 @@ function nextPage(): void {
 .docs__file {
   display: none;
 }
+
+.docs__actions { display: flex; align-items: center; gap: 12px; max-width: 100%; overflow-x: auto; }
 
 .docs__notice {
   margin-bottom: 12px;
@@ -315,7 +317,7 @@ function nextPage(): void {
 .docs__item {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 12px;
   justify-content: space-between;
   padding: 12px 0;
   border-bottom: 1px solid var(--zj-border);
@@ -355,12 +357,12 @@ function nextPage(): void {
 
 .docs__item-actions {
   display: flex;
-  gap: 4px;
-  align-items: flex-start;
+  gap: 8px;
+  align-items: center;
 }
 
 .docs__preview-meta {
-  margin: 0 0 10px;
+  margin: 0 0 12px;
   font-size: 13px;
 }
 
@@ -368,7 +370,7 @@ function nextPage(): void {
   margin: 0;
   max-height: 56vh;
   overflow: auto;
-  padding: 14px;
+  padding: 16px;
   background: #fff;
   border: 1px solid var(--zj-border);
   border-radius: var(--zj-radius);

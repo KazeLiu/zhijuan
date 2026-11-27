@@ -255,12 +255,13 @@ watch(
 .picker__filters {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 12px;
   align-items: center;
 }
 
 .picker__keyword {
-  max-width: 280px;
+  flex: 1 1 160px;
+  min-width: 0;
 }
 
 .picker__alert {
@@ -299,7 +300,9 @@ watch(
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
 }
 
 .picker__foot-text {
